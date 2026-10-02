@@ -19,3 +19,8 @@ state, with a Django dashboard for demo.
     python3 -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     python3 -m unittest discover -v
+
+## Run
+
+    python3 -m healer            # start the healer + all services (Ctrl+C to stop)
+    python3 -m healer.status     # show service state and recent events
