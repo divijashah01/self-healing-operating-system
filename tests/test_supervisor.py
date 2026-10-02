@@ -9,15 +9,15 @@ from pathlib import Path
 
 import psutil
 
-from healer.config import ServiceConfig
+from healer.config import RestartPolicy, ServiceConfig
 from healer.eventlog import EventLog, EventType
 from healer.supervisor import Status, Supervisor
 
 SLEEPER = "import time; time.sleep(60)"
-
+NO_RESTART = RestartPolicy(policy="never")
 
 def svc(name, code):
-    return ServiceConfig(name=name, command=(sys.executable, "-c", code))
+    return ServiceConfig(name=name, command=(sys.executable, "-c", code), restart=NO_RESTART)
 
 
 class SupervisorTests(unittest.TestCase):
@@ -70,7 +70,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertIn("SIGKILL", crash["message"])
 
     def test_missing_binary_is_crash(self):
-        self.sup = Supervisor([ServiceConfig(name="a", command=("/no/such/binary",))],
+        self.sup = Supervisor([ServiceConfig(name="a", command=("/no/such/binary",), restart=NO_RESTART)],
                               self.eventlog, Path(self.tmp.name) / "logs")
         self.sup.start_all()
         self.assertEqual(self.sup.services["a"].status, Status.CRASHED)
