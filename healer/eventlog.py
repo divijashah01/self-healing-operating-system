@@ -59,6 +59,8 @@ class EventType:
     SERVICE_STOPPED = "service_stopped"
     ZOMBIE_DETECTED = "zombie_detected"
     ZOMBIE_REAPED = "zombie_reaped"
+    RESTART_SCHEDULED = "restart_scheduled"
+    CIRCUIT_CLOSED = "circuit_closed"
 
 
 class EventLog:

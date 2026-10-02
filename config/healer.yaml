@@ -3,6 +3,16 @@ healer:
   db_path: data/healer.db
   poll_interval: 1.0
 
+# Applied to every service unless overridden by a per-service `restart:` block.
+restart_defaults:
+  policy: on-failure      # never | on-failure | always
+  backoff_base: 1.0       # seconds before 1st restart, doubles per consecutive failure
+  backoff_max: 30.0
+  max_failures: 5         # this many failures within `window` seconds -> quarantine
+  window: 60.0
+  stable_after: 20.0      # healthy this long -> counters reset / circuit closes
+  cooldown: 60.0          # quarantine length before one probe restart (0 = manual reset only)
+
 # Commands run with the project root as the working directory.
 services:
   - name: web
