@@ -1,0 +1,13 @@
+healer:
+  data_dir: data
+  db_path: data/healer.db
+  poll_interval: 1.0
+
+# Commands run with the project root as the working directory.
+services:
+  - name: web
+    command: ["python3", "services/web_service.py", "--port", "8001"]
+  - name: worker
+    command: ["python3", "services/worker_service.py", "--interval", "1.0"]
+  - name: filewriter
+    command: ["python3", "services/file_service.py", "--dir", "data/critical"]
