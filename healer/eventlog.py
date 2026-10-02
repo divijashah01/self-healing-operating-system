@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -25,11 +25,13 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_service ON events(service, ts);
 
 CREATE TABLE IF NOT EXISTS service_state (
-    name       TEXT PRIMARY KEY,
-    status     TEXT NOT NULL,
-    pid        INTEGER,
-    restarts   INTEGER NOT NULL DEFAULT 0,
-    updated_at REAL NOT NULL
+    name        TEXT PRIMARY KEY,
+    status      TEXT NOT NULL,
+    pid         INTEGER,
+    restarts    INTEGER NOT NULL DEFAULT 0,
+    cpu_percent REAL,
+    rss_mb      REAL,
+    updated_at  REAL NOT NULL
 );
 """
 
@@ -54,6 +56,9 @@ class EventType:
     FILE_RESTORED = "file_restored"
     CHECKPOINT_SAVED = "checkpoint_saved"
     CHECKPOINT_RESTORED = "checkpoint_restored"
+    SERVICE_STOPPED = "service_stopped"
+    ZOMBIE_DETECTED = "zombie_detected"
+    ZOMBIE_REAPED = "zombie_reaped"
 
 
 class EventLog:
@@ -104,16 +109,19 @@ class EventLog:
         return events
 
     # ---- current service state ---------------------------------------
-    def set_state(self, name: str, status: str,
-                  pid: Optional[int] = None, restarts: int = 0) -> None:
+    def set_state(self, name: str, status: str, pid: Optional[int] = None,
+                  restarts: int = 0, cpu_percent: Optional[float] = None,
+                  rss_mb: Optional[float] = None) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO service_state(name, status, pid, restarts, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO service_state"
+                "(name, status, pid, restarts, cpu_percent, rss_mb, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(name) DO UPDATE SET status=excluded.status, "
                 "pid=excluded.pid, restarts=excluded.restarts, "
+                "cpu_percent=excluded.cpu_percent, rss_mb=excluded.rss_mb, "
                 "updated_at=excluded.updated_at",
-                (name, status, pid, restarts, time.time()),
+                (name, status, pid, restarts, cpu_percent, rss_mb, time.time()),
             )
 
     def get_states(self) -> list[dict]:
