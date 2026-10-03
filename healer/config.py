@@ -26,11 +26,18 @@ class RestartPolicy:
     cooldown: float = 60.0        # quarantine length before one probe restart (0 = manual reset only)
 
 @dataclass(frozen=True)
+class HeartbeatPolicy:
+    timeout: float = 5.0         # no heartbeat for this long -> hung
+    startup_grace: float = 5.0   # don't judge a service this soon after (re)start
+    term_grace: float = 3.0      # after SIGTERM, wait this long before SIGKILL
+
+@dataclass(frozen=True)
 class ServiceConfig:
     name: str
     command: tuple
     env: dict = field(default_factory=dict)
     restart: RestartPolicy = field(default_factory=RestartPolicy)
+    heartbeat: Optional[HeartbeatPolicy] = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +78,22 @@ def _parse_restart(owner: str, raw, base: Optional[RestartPolicy] = None) -> Res
         raise ConfigError(f"{owner}: invalid restart settings")
     return p
 
+def _parse_heartbeat(owner: str, raw) -> Optional[HeartbeatPolicy]:
+    if raw is None:
+        return None                      # heartbeat monitoring not enabled
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{owner}: 'heartbeat' must be a mapping")
+    unknown = set(raw) - {f.name for f in fields(HeartbeatPolicy)}
+    if unknown:
+        raise ConfigError(f"{owner}: unknown heartbeat option(s): {', '.join(sorted(unknown))}")
+    try:
+        p = HeartbeatPolicy(**{k: float(v) for k, v in raw.items()})
+    except (TypeError, ValueError):
+        raise ConfigError(f"{owner}: heartbeat options must be numbers") from None
+    if p.timeout <= 0 or p.startup_grace < 0 or p.term_grace <= 0:
+        raise ConfigError(f"{owner}: invalid heartbeat settings")
+    return p
+
 def load_config(path: Optional[Path] = None) -> Config:
     path = Path(path) if path else DEFAULT_CONFIG_PATH
     with open(path, "r", encoding="utf-8") as fh:
@@ -101,6 +124,7 @@ def load_config(path: Optional[Path] = None) -> Config:
         services.append(ServiceConfig(
             name=name, command=tuple(command), env=dict(entry.get("env") or {}),
             restart=_parse_restart(f"service '{name}'", entry.get("restart"), base=defaults),
+            heartbeat=_parse_heartbeat(f"service '{name}'", entry.get("heartbeat")),
         ))
     if not services:
         raise ConfigError("no services configured")

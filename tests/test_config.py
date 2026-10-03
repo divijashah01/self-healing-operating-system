@@ -48,6 +48,22 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(p)
 
+    def test_heartbeat_is_optional_and_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n"
+                           "  - {name: a, command: [x]}\n"
+                           "  - {name: b, command: [y], heartbeat: {timeout: 3, term_grace: 1}}\n")
+            a, b = load_config(p).services
+        self.assertIsNone(a.heartbeat)
+        self.assertEqual((b.heartbeat.timeout, b.heartbeat.term_grace, b.heartbeat.startup_grace),
+                         (3.0, 1.0, 5.0))
+
+    def test_invalid_heartbeat_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n  - {name: a, command: [x], heartbeat: {timeout: 0}}\n")
+            with self.assertRaises(ConfigError):
+                load_config(p)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -61,6 +61,7 @@ class EventType:
     ZOMBIE_REAPED = "zombie_reaped"
     RESTART_SCHEDULED = "restart_scheduled"
     CIRCUIT_CLOSED = "circuit_closed"
+    HANG_ESCALATED = "hang_escalated"
 
 
 class EventLog:

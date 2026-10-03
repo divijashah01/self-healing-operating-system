@@ -17,7 +17,10 @@ restart_defaults:
 services:
   - name: web
     command: ["python3", "services/web_service.py", "--port", "8001"]
+    heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
   - name: worker
     command: ["python3", "services/worker_service.py", "--interval", "1.0"]
+    heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
   - name: filewriter
     command: ["python3", "services/file_service.py", "--dir", "data/critical"]
+    heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}

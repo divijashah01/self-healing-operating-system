@@ -7,6 +7,7 @@ import signal
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from heartbeat import Heartbeat
 
 START = time.time()
 
@@ -32,6 +33,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"[web pid={os.getpid()}] {self.address_string()} {fmt % args}", flush=True)
 
+class Server(ThreadingHTTPServer):
+    """Beats from serve_forever's own loop, so a stuck main loop stops the heartbeat."""
+    heartbeat = Heartbeat()
+
+    def service_actions(self):
+        self.heartbeat.beat()
 
 def main():
     parser = argparse.ArgumentParser()
@@ -40,10 +47,10 @@ def main():
     args = parser.parse_args()
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # clean stop
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = Server((args.host, args.port), Handler)
     print(f"[web pid={os.getpid()}] listening on {args.host}:{args.port}", flush=True)
     try:
-        server.serve_forever()
+        server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:

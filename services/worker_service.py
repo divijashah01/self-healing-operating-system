@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import time
+from heartbeat import Heartbeat
 
 # In-memory state. Phase 6 will checkpoint and restore this.
 state = {"processed": 0, "last_job": None}
@@ -18,7 +19,9 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # clean stop
     print(f"[worker pid={os.getpid()}] started", flush=True)
     try:
+        heartbeat = Heartbeat()
         while True:
+            heartbeat.beat()
             state["processed"] += 1
             state["last_job"] = f"job-{state['processed']}"
             print(f"[worker pid={os.getpid()}] processed={state['processed']} "

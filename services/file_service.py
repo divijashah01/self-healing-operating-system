@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from heartbeat import Heartbeat
 
 DEFAULT_CONF = "mode=production\nmax_retries=3\n"
 
@@ -31,7 +32,9 @@ def main():
     print(f"[filewriter pid={os.getpid()}] started, dir={directory}", flush=True)
     tick = 0
     try:
+        heartbeat = Heartbeat()
         while True:
+            heartbeat.beat()
             tick += 1
             try:
                 ok = conf_is_valid(conf.read_text())
