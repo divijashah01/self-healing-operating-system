@@ -16,7 +16,8 @@ class Healer:
         self.config = config
         self.eventlog = EventLog(config.healer.db_path)
         self.supervisor = Supervisor(config.services, self.eventlog,
-                                     config.healer.data_dir / "logs")
+                                     config.healer.data_dir / "logs",
+                                     heartbeat_dir=config.healer.data_dir / "heartbeats",)
         self._stop = threading.Event()
 
     def request_stop(self, *_args) -> None:

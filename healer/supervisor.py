@@ -69,14 +69,21 @@ class ManagedService:
     failure_times: list = field(default_factory=list)   # drives the circuit breaker
     next_restart_at: Optional[float] = None
     probation: bool = False                   # True while a post-quarantine probe is running
+    hang_since: Optional[float] = None    # set once the healer starts killing a hung process
+    kill_reason: Optional[str] = None     # "hung" while a healer-initiated kill is in progress
+    kill_sent: bool = False               # SIGKILL already sent
 
 
 class Supervisor:
     def __init__(self, services, eventlog: EventLog, logs_dir,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, heartbeat_dir=None):
         self.eventlog = eventlog
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.heartbeat_dir = (Path(heartbeat_dir) if heartbeat_dir
+                              else self.logs_dir.parent / "heartbeats")
+        self.heartbeat_dir.mkdir(parents=True, exist_ok=True)
+
         self.clock = clock                    # injectable so tests can fake time
         self.services = {s.name: ManagedService(s) for s in services}
         self._reported_zombies = set()
@@ -93,6 +100,15 @@ class Supervisor:
         except ProcessLookupError:
             pass
 
+    def _heartbeat_path(self, svc: ManagedService) -> Path:
+        return self.heartbeat_dir / f"{svc.config.name}.hb"
+
+    def _env_for(self, svc: ManagedService) -> dict:
+        env = {**os.environ, **svc.config.env}
+        if svc.config.heartbeat is not None:
+            env["HEALER_HEARTBEAT_FILE"] = str(self._heartbeat_path(svc))
+        return env
+
     # ---- lifecycle -----------------------------------------------------
     def start_all(self) -> None:
         for svc in self.services.values():
@@ -106,7 +122,7 @@ class Supervisor:
             with open(log_path, "ab") as out:
                 svc.proc = subprocess.Popen(
                     list(svc.config.command), cwd=PROJECT_ROOT,
-                    env={**os.environ, **svc.config.env},
+                    env=self._env_for(svc),
                     stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
@@ -122,6 +138,7 @@ class Supervisor:
         svc.status = Status.RUNNING
         svc.started_at = now
         svc.next_restart_at = None
+        svc.hang_since, svc.kill_reason, svc.kill_sent = None, None, False
         self.eventlog.set_state(name, svc.status, pid=svc.proc.pid, restarts=svc.restarts)
         if restart:
             self._event(EventType.SERVICE_RESTARTED, name, Severity.INFO,
@@ -164,6 +181,7 @@ class Supervisor:
                 if returncode is None:
                     self._sample(svc)
                     self._maybe_mark_stable(svc, now)
+                    self._check_heartbeat(svc, now)
                 else:
                     self._handle_exit(svc, returncode, now)
             elif svc.status in (Status.RESTARTING, Status.QUARANTINED):
@@ -180,9 +198,50 @@ class Supervisor:
                                 restarts=svc.restarts, cpu_percent=cpu,
                                 rss_mb=round(rss_mb, 1))
 
+    # ---- hang detection ------------------------------------------------
+    def _check_heartbeat(self, svc: ManagedService, now: float) -> None:
+        hb = svc.config.heartbeat
+        if hb is None:
+            return
+        if svc.hang_since is not None:        # already terminating it: escalate if ignored
+            if not svc.kill_sent and now - svc.hang_since >= hb.term_grace:
+                svc.kill_sent = True
+                self._signal(svc, signal.SIGKILL)
+                self._event(EventType.HANG_ESCALATED, svc.config.name, Severity.ERROR,
+                            f"still alive {hb.term_grace:g}s after SIGTERM; sent SIGKILL",
+                            pid=svc.proc.pid)
+            return
+        if svc.started_at is None or now - svc.started_at < hb.startup_grace:
+            return
+        try:
+            last = self._heartbeat_path(svc).stat().st_mtime
+        except OSError:
+            last = 0.0                        # never beat since start
+        age = now - max(last, svc.started_at)  # ignore stale files from a previous run
+        if age > hb.timeout:
+            self._declare_hung(svc, now, age)
+
+    def _declare_hung(self, svc: ManagedService, now: float, age: float) -> None:
+        hb, name = svc.config.heartbeat, svc.config.name
+        try:
+            proc_status = svc.ps.status()     # e.g. "stopped", "sleeping", "running"
+        except psutil.NoSuchProcess:
+            proc_status = "gone"
+        svc.hang_since, svc.kill_reason = now, "hung"
+        self._event(EventType.SERVICE_HUNG, name, Severity.ERROR,
+                    f"no heartbeat for {age:.1f}s (timeout {hb.timeout:g}s); sending SIGTERM",
+                    pid=svc.proc.pid, age_s=round(age, 1), proc_status=proc_status)
+        self._signal(svc, signal.SIGTERM)
+        self._signal(svc, signal.SIGCONT)     # a stopped process only acts on SIGTERM once continued
+
     def _handle_exit(self, svc: ManagedService, returncode: int, now: float) -> None:
         name, pid = svc.config.name, svc.proc.pid
         status, reason = classify_exit(returncode)
+        if svc.kill_reason == "hung":   # we killed it: a failure even if it exited with code 0
+            status = Status.CRASHED
+            reason = ("terminated by healer after hang (SIGKILL)" if svc.kill_sent
+                      else "terminated by healer after hang (SIGTERM)")
+        svc.hang_since, svc.kill_reason, svc.kill_sent = None, None, False
         uptime = round(now - svc.started_at, 1) if svc.started_at else None
         svc.status, svc.proc, svc.ps = status, None, None
         if status == Status.CRASHED:
