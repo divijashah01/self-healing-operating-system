@@ -64,6 +64,25 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(p)
 
+    def test_protected_files_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n  - {name: a, command: [x]}\n"
+                           "protected_files:\n"
+                           "  - {path: data/x.conf, keep_versions: 3, validate: keyvalue}\n")
+            pf = load_config(p).protected_files[0]
+        self.assertTrue(pf.path.is_absolute())
+        self.assertEqual((pf.mode, pf.keep_versions, pf.validate), ("restore", 3, "keyvalue"))
+
+    def test_invalid_protected_file_rejected(self):
+        bad_entries = ["{path: x, mode: nuke}", "{path: x, keep_versions: 0}",
+                       "{path: x, validate: magic}", "{mode: restore}"]
+        for bad in bad_entries:
+            with tempfile.TemporaryDirectory() as tmp:
+                p = write(tmp, f"services:\n  - {{name: a, command: [x]}}\n"
+                               f"protected_files:\n  - {bad}\n")
+                with self.assertRaises(ConfigError, msg=bad):
+                    load_config(p)
+
 
 if __name__ == "__main__":
     unittest.main()

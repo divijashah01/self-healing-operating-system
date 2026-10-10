@@ -31,6 +31,16 @@ class HeartbeatPolicy:
     startup_grace: float = 5.0   # don't judge a service this soon after (re)start
     term_grace: float = 3.0      # after SIGTERM, wait this long before SIGKILL
 
+VALID_FILE_MODES = ("restore", "alert")
+VALID_VALIDATORS = ("keyvalue",)
+
+@dataclass(frozen=True)
+class ProtectedFile:
+    path: Path
+    mode: str = "restore"            # restore = auto-heal, alert = only report
+    keep_versions: int = 5           # snapshot versions kept (the baseline is always kept)
+    validate: Optional[str] = None   # content check; failing it is reported as "corrupted"
+
 @dataclass(frozen=True)
 class ServiceConfig:
     name: str
@@ -51,6 +61,7 @@ class HealerSettings:
 class Config:
     healer: HealerSettings
     services: tuple
+    protected_files: tuple = ()
 
 
 def _resolve(path_str: str) -> Path:
@@ -94,6 +105,27 @@ def _parse_heartbeat(owner: str, raw) -> Optional[HeartbeatPolicy]:
         raise ConfigError(f"{owner}: invalid heartbeat settings")
     return p
 
+def _parse_protected(entry) -> ProtectedFile:
+    if not isinstance(entry, dict) or not entry.get("path"):
+        raise ConfigError("every protected file needs a 'path'")
+    unknown = set(entry) - {"path", "mode", "keep_versions", "validate"}
+    if unknown:
+        raise ConfigError(f"protected file: unknown option(s): {', '.join(sorted(unknown))}")
+    mode = entry.get("mode", "restore")
+    if mode not in VALID_FILE_MODES:
+        raise ConfigError(f"protected file: mode must be one of {VALID_FILE_MODES}")
+    try:
+        keep = int(entry.get("keep_versions", 5))
+    except (TypeError, ValueError):
+        raise ConfigError("protected file: keep_versions must be an integer") from None
+    if keep < 1:
+        raise ConfigError("protected file: keep_versions must be >= 1")
+    validate = entry.get("validate")
+    if validate is not None and validate not in VALID_VALIDATORS:
+        raise ConfigError(f"protected file: validate must be one of {VALID_VALIDATORS}")
+    return ProtectedFile(path=_resolve(str(entry["path"])).resolve(), mode=mode,
+                         keep_versions=keep, validate=validate)
+
 def load_config(path: Optional[Path] = None) -> Config:
     path = Path(path) if path else DEFAULT_CONFIG_PATH
     with open(path, "r", encoding="utf-8") as fh:
@@ -128,4 +160,11 @@ def load_config(path: Optional[Path] = None) -> Config:
         ))
     if not services:
         raise ConfigError("no services configured")
-    return Config(healer=settings, services=tuple(services))
+    protected, seen_paths = [], set()
+    for entry in raw.get("protected_files") or []:
+        pf = _parse_protected(entry)
+        if pf.path in seen_paths:
+            raise ConfigError(f"duplicate protected file: {pf.path}")
+        seen_paths.add(pf.path)
+        protected.append(pf)
+    return Config(healer=settings, services=tuple(services), protected_files=tuple(protected))
