@@ -24,3 +24,9 @@ services:
   - name: filewriter
     command: ["python3", "services/file_service.py", "--dir", "data/critical"]
     heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
+
+protected_files:
+  - path: data/critical/app.conf
+    mode: restore          # restore = auto-heal, alert = only report
+    keep_versions: 5
+    validate: keyvalue     # optional: invalid content is reported as "corrupted"

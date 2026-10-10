@@ -24,3 +24,6 @@ state, with a Django dashboard for demo.
 
     python3 -m healer            # start the healer + all services (Ctrl+C to stop)
     python3 -m healer.status     # show service state and recent events
+    python3 -m healer.files      # list protected files and versions
+    python3 -m healer.files approve data/critical/app.conf --from new.conf
+    python3 -m healer.files restore data/critical/app.conf --version 1
