@@ -27,10 +27,12 @@ class Check:
     data: Optional[bytes] = None
 
 
-def emit(eventlog: EventLog, event_type: str, severity: str, message: str, **details) -> None:
+def emit(eventlog: EventLog, event_type: str, severity: str, message: str,
+         service: Optional[str] = None, **details) -> None:
     """Write to the console log and the event log."""
-    log.log(getattr(logging, severity.upper()), "%s", message)
-    eventlog.log(event_type, severity=severity, message=message, **details)
+    text = f"[{service}] {message}" if service else message
+    log.log(getattr(logging, severity.upper()), "%s", text)
+    eventlog.log(event_type, service=service, severity=severity, message=message, **details)
 
 
 def atomic_write(path: Path, data: bytes, mode: int) -> None:

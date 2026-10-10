@@ -42,12 +42,18 @@ class ProtectedFile:
     validate: Optional[str] = None   # content check; failing it is reported as "corrupted"
 
 @dataclass(frozen=True)
+class CheckpointPolicy:
+    keep: int = 5                # checkpoints kept per service
+    trust_after: float = 10.0    # a restored service crashing sooner than this blames its checkpoint
+
+@dataclass(frozen=True)
 class ServiceConfig:
     name: str
     command: tuple
     env: dict = field(default_factory=dict)
     restart: RestartPolicy = field(default_factory=RestartPolicy)
     heartbeat: Optional[HeartbeatPolicy] = None
+    checkpoint: Optional[CheckpointPolicy] = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,23 @@ def _parse_heartbeat(owner: str, raw) -> Optional[HeartbeatPolicy]:
         raise ConfigError(f"{owner}: invalid heartbeat settings")
     return p
 
+def _parse_checkpoint(owner: str, raw) -> Optional[CheckpointPolicy]:
+    if raw is None:
+        return None                      # checkpointing not enabled ({} enables the defaults)
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{owner}: 'checkpoint' must be a mapping")
+    unknown = set(raw) - {"keep", "trust_after"}
+    if unknown:
+        raise ConfigError(f"{owner}: unknown checkpoint option(s): {', '.join(sorted(unknown))}")
+    try:
+        p = CheckpointPolicy(keep=int(raw.get("keep", 5)),
+                             trust_after=float(raw.get("trust_after", 10.0)))
+    except (TypeError, ValueError):
+        raise ConfigError(f"{owner}: checkpoint options must be numbers") from None
+    if p.keep < 1 or p.trust_after <= 0:
+        raise ConfigError(f"{owner}: invalid checkpoint settings")
+    return p
+
 def _parse_protected(entry) -> ProtectedFile:
     if not isinstance(entry, dict) or not entry.get("path"):
         raise ConfigError("every protected file needs a 'path'")
@@ -157,6 +180,7 @@ def load_config(path: Optional[Path] = None) -> Config:
             name=name, command=tuple(command), env=dict(entry.get("env") or {}),
             restart=_parse_restart(f"service '{name}'", entry.get("restart"), base=defaults),
             heartbeat=_parse_heartbeat(f"service '{name}'", entry.get("heartbeat")),
+            checkpoint=_parse_checkpoint(f"service '{name}'", entry.get("checkpoint")),
         ))
     if not services:
         raise ConfigError("no services configured")

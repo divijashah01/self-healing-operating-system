@@ -83,6 +83,22 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigError, msg=bad):
                     load_config(p)
 
+    def test_checkpoint_policy_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n"
+                           "  - {name: a, command: [x], checkpoint: {keep: 3}}\n"
+                           "  - {name: b, command: [y]}\n")
+            a, b = load_config(p).services
+        self.assertEqual((a.checkpoint.keep, a.checkpoint.trust_after), (3, 10.0))
+        self.assertIsNone(b.checkpoint)
+
+    def test_invalid_checkpoint_policy_rejected(self):
+        for bad in ("{keep: 0}", "{trust_after: -1}", "{nope: 1}"):
+            with tempfile.TemporaryDirectory() as tmp:
+                p = write(tmp, f"services:\n  - {{name: a, command: [x], checkpoint: {bad}}}\n")
+                with self.assertRaises(ConfigError, msg=bad):
+                    load_config(p)
+
 
 if __name__ == "__main__":
     unittest.main()

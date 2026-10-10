@@ -82,6 +82,7 @@ class EventType:
     FILE_MODIFIED = "file_modified"
     FILE_BASELINED = "file_baselined"
     FILE_APPROVED = "file_approved"
+    CHECKPOINT_REJECTED = "checkpoint_rejected"
 
 
 class EventLog:

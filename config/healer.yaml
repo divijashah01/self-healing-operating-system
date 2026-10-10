@@ -21,6 +21,7 @@ services:
   - name: worker
     command: ["python3", "services/worker_service.py", "--interval", "1.0"]
     heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
+    checkpoint: {keep: 5, trust_after: 10.0}
   - name: filewriter
     command: ["python3", "services/file_service.py", "--dir", "data/critical"]
     heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
