@@ -23,7 +23,7 @@ def main() -> None:
     for e in reversed(elog.recent(args.events)):
         t = time.strftime("%H:%M:%S", time.localtime(e["ts"]))
         print(f"{t}  {e['severity']:<9}{(e['service'] or 'healer'):<11}"
-              f"{e['event_type']:<18}{e['message']}")
+              f"{e['event_type']:<20}{e['message']}")
 
 
 if __name__ == "__main__":

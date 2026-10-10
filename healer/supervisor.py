@@ -14,6 +14,8 @@ import psutil
 from .config import PROJECT_ROOT, ServiceConfig
 from .eventlog import EventLog, EventType, Severity
 
+from .checkpoints import CheckpointManager
+
 log = logging.getLogger("healer.supervisor")
 
 _LOG_LEVELS = {
@@ -72,11 +74,12 @@ class ManagedService:
     hang_since: Optional[float] = None    # set once the healer starts killing a hung process
     kill_reason: Optional[str] = None     # "hung" while a healer-initiated kill is in progress
     kill_sent: bool = False               # SIGKILL already sent
+    restored_from: Optional[Path] = None      # checkpoint this run was started from
 
 
 class Supervisor:
     def __init__(self, services, eventlog: EventLog, logs_dir,
-                 clock: Callable[[], float] = time.time, heartbeat_dir=None):
+                 clock: Callable[[], float] = time.time, heartbeat_dir=None, checkpoint_dir=None):
         self.eventlog = eventlog
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +90,8 @@ class Supervisor:
         self.clock = clock                    # injectable so tests can fake time
         self.services = {s.name: ManagedService(s) for s in services}
         self._reported_zombies = set()
+        self.checkpoints = CheckpointManager(
+            eventlog, checkpoint_dir or self.logs_dir.parent / "checkpoints")
 
     # ---- helpers -------------------------------------------------------
     def _event(self, event_type, service, severity, message, **details):
@@ -103,10 +108,15 @@ class Supervisor:
     def _heartbeat_path(self, svc: ManagedService) -> Path:
         return self.heartbeat_dir / f"{svc.config.name}.hb"
 
-    def _env_for(self, svc: ManagedService) -> dict:
+    def _env_for(self, svc: ManagedService, restore_path=None) -> dict:
         env = {**os.environ, **svc.config.env}
         if svc.config.heartbeat is not None:
             env["HEALER_HEARTBEAT_FILE"] = str(self._heartbeat_path(svc))
+        if svc.config.checkpoint is not None:
+            env["HEALER_CHECKPOINT_DIR"] = str(self.checkpoints.dir_for(svc.config.name))
+            env["HEALER_CHECKPOINT_KEEP"] = str(svc.config.checkpoint.keep)
+            if restore_path is not None:
+                env["HEALER_RESTORE_FROM"] = str(restore_path)
         return env
 
     # ---- lifecycle -----------------------------------------------------
@@ -118,11 +128,14 @@ class Supervisor:
         name = svc.config.name
         now = self.clock()
         log_path = self.logs_dir / f"{name}.log"
+        chosen = None
+        if svc.config.checkpoint is not None:
+            chosen = self.checkpoints.pick(name)      # newest checkpoint that validates
         try:
             with open(log_path, "ab") as out:
                 svc.proc = subprocess.Popen(
                     list(svc.config.command), cwd=PROJECT_ROOT,
-                    env=self._env_for(svc),
+                    env=self._env_for(svc, chosen.path if chosen else None),
                     stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
@@ -134,6 +147,7 @@ class Supervisor:
             self._after_exit(svc, Status.CRASHED, now)
             return False
         svc.ps = psutil.Process(svc.proc.pid)
+        svc.restored_from = chosen.path if chosen else None
         svc.ps.cpu_percent(None)              # prime the CPU counter
         svc.status = Status.RUNNING
         svc.started_at = now
@@ -147,6 +161,11 @@ class Supervisor:
         else:
             self._event(EventType.SERVICE_STARTED, name, Severity.INFO,
                         f"started (pid {svc.proc.pid})", pid=svc.proc.pid)
+        if chosen is not None:
+            age = round(time.time() - chosen.ts, 1)
+            self._event(EventType.CHECKPOINT_RESTORED, name, Severity.INFO,
+                        f"restoring state from checkpoint #{chosen.seq} (saved {age:g}s ago)",
+                        seq=chosen.seq, age_s=age, path=str(chosen.path))
         return True
 
     def stop_all(self, grace: float = 5.0) -> None:
@@ -251,6 +270,12 @@ class Supervisor:
         else:
             self._event(EventType.SERVICE_STOPPED, name, Severity.INFO, reason,
                         pid=pid, exit_code=returncode, uptime_s=uptime)
+        cp = svc.config.checkpoint
+        if (status == Status.CRASHED and cp is not None and svc.restored_from is not None
+                and uptime is not None and uptime < cp.trust_after):
+            self.checkpoints.reject(name, svc.restored_from,
+                                    f"service crashed {uptime:.1f}s after restoring it")
+        svc.restored_from = None
         self._after_exit(svc, status, now)
 
     # ---- restart policy / backoff / circuit breaker --------------------

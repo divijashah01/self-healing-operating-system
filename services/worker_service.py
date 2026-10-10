@@ -1,31 +1,45 @@
 #!/usr/bin/env python3
-"""Demo worker: processes 'jobs' and keeps its progress only in memory."""
+"""Demo worker: processes 'jobs'; progress lives in memory but is checkpointed."""
 import argparse
 import os
 import signal
 import sys
 import time
+
+from checkpoint import Checkpointer
 from heartbeat import Heartbeat
 
-# In-memory state. Phase 6 will checkpoint and restore this.
+# In-memory state. Checkpointed periodically; restored by the healer after a crash.
 state = {"processed": 0, "last_job": None}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--interval", type=float, default=1.0)
+    parser.add_argument("--checkpoint-every", type=int, default=3,
+                        help="save state every N jobs")
     args = parser.parse_args()
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # clean stop
-    print(f"[worker pid={os.getpid()}] started", flush=True)
+    pid = os.getpid()
+    heartbeat = Heartbeat()
+    checkpointer = Checkpointer("worker")
+    restored = checkpointer.load_restored()
+    if restored is not None:
+        state.update(restored)
+        print(f"[worker pid={pid}] restored state: processed={state['processed']}", flush=True)
+    print(f"[worker pid={pid}] started", flush=True)
     try:
-        heartbeat = Heartbeat()
         while True:
             heartbeat.beat()
             state["processed"] += 1
             state["last_job"] = f"job-{state['processed']}"
-            print(f"[worker pid={os.getpid()}] processed={state['processed']} "
+            print(f"[worker pid={pid}] processed={state['processed']} "
                   f"last_job={state['last_job']}", flush=True)
+            if state["processed"] % args.checkpoint_every == 0:
+                saved = checkpointer.save(state)
+                if saved:
+                    print(f"[worker pid={pid}] checkpoint saved ({saved.name})", flush=True)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass

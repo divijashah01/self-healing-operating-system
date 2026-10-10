@@ -20,7 +20,8 @@ class Healer:
         self.eventlog = EventLog(config.healer.db_path)
         self.supervisor = Supervisor(config.services, self.eventlog,
                                      config.healer.data_dir / "logs",
-                                     heartbeat_dir=config.healer.data_dir / "heartbeats",)
+                                     heartbeat_dir=config.healer.data_dir / "heartbeats",
+                                     checkpoint_dir=config.healer.data_dir / "checkpoints",)
         self.vault = FileVault(self.eventlog, config.healer.data_dir / "snapshots")
         self.guard = FileGuard(config.protected_files, self.vault, self.eventlog)
         self._stop = threading.Event()
