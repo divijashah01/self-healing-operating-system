@@ -67,6 +67,19 @@ class DashboardTests(SimpleTestCase):
         self.assertEqual(self.client.get("/api/command/9999").status_code, 404)
 
     def test_pages_render(self):
-        for url in ("/", "/files/", "/checkpoints/"):
+        for url in ("/", "/files/", "/checkpoints/", "/chaos/"):
             self.assertEqual(self.client.get(url).status_code, 200, url)
         self.assertContains(self.client.get("/files/"), "app.conf")
+
+    def test_healing_flag_defaults_on_and_follows_the_switch(self):
+        self.assertTrue(self.client.get("/api/state").json()["healer"]["healing"])
+        self.log.set_meta("healing", "off")
+        self.assertFalse(self.client.get("/api/state").json()["healer"]["healing"])
+
+    def test_chaos_page_shows_the_last_comparison(self):
+        self.log.set_meta("last_comparison", json.dumps({
+            "ts": time.time(), "off_window": 15, "timeout": 40,
+            "rows": [{"fault": "worker killed", "off": None, "on": 1.9}]}))
+        page = self.client.get("/chaos/")
+        self.assertContains(page, "worker killed")
+        self.assertContains(page, "1.9")

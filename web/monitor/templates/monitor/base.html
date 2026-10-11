@@ -25,6 +25,7 @@
   .b-quarantined,.b-crashed,.b-missing,.b-failed,.b-invalid,.b-error,.b-critical { background:var(--bad); }
   .b-info { background:#30363d; }
   #healer { padding:10px 16px; margin:16px 0 0; border-left:4px solid var(--idle); background:var(--card); }
+  #healer.warn { border-color:var(--warn); }
   #healer.up { border-color:var(--ok); } #healer.down { border-color:var(--bad); }
   .btn { background:#21262d; color:var(--text); border:1px solid var(--line); padding:3px 10px; border-radius:6px; cursor:pointer; font-size:12px; }
   .btn:hover { border-color:var(--accent); } .btn.warn { border-color:var(--warn); } .btn.primary { background:#238636; border-color:#238636; }
@@ -38,6 +39,7 @@
   <a href="/" class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
   <a href="/files/" class="{% if page == 'files' %}active{% endif %}">Files</a>
   <a href="/checkpoints/" class="{% if page == 'checkpoints' %}active{% endif %}">Checkpoints</a>
+  <a href="/chaos/" class="{% if page == 'chaos' %}active{% endif %}">Chaos</a>
 </nav>
 <main>{% block content %}{% endblock %}</main>
 <div id="toast"></div>

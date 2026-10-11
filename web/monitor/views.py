@@ -14,7 +14,8 @@ from healer.filevault import FileVault
 from . import services
 
 ACTIONS = {"restart_service", "stop_service", "start_service", "reset_circuit",
-           "restore_file", "update_file"}
+           "restore_file", "update_file",
+           "chaos_kill", "chaos_freeze", "chaos_leak", "chaos_file", "set_healing"}
 MAX_BODY = 100_000
 
 
@@ -121,3 +122,33 @@ def checkpoints(request):
                 continue
         items.append({"service": svc.name, "rows": rows})
     return render(request, "monitor/checkpoints.html", {"page": "checkpoints", "items": items})
+
+@require_GET
+@ensure_csrf_cookie
+def chaos(request):
+    cfg = services.get_config()
+    log = services.get_log(cfg)
+    comparison = None
+    raw = log.get_meta("last_comparison")
+    if raw:
+        try:
+            data = json.loads(raw)
+            comparison = {
+                "when": _when(data["ts"]),
+                "rows": [{"fault": r["fault"],
+                          "off": (f"recovered in {r['off']:.1f}s" if r["off"] is not None
+                                  else f"NOT recovered within {data['off_window']:g}s"),
+                          "off_bad": r["off"] is None,
+                          "on": (f"recovered in {r['on']:.1f}s" if r["on"] is not None
+                                 else f"NOT recovered within {data['timeout']:g}s")}
+                         for r in data["rows"]]}
+        except (ValueError, KeyError, TypeError):
+            comparison = None
+    context = {
+        "page": "chaos",
+        "services": [{"name": s.name, "leakable": s.memory_limit_mb is not None}
+                     for s in cfg.services],
+        "files": [str(pf.path) for pf in cfg.protected_files],
+        "comparison": comparison,
+    }
+    return render(request, "monitor/chaos.html", context)

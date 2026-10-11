@@ -1,0 +1,73 @@
+{% extends "monitor/base.html" %}
+{% block title %}Chaos{% endblock %}
+{% block content %}
+<h2>Healing switch</h2>
+<div class="card">
+  <span id="healing-badge" class="badge">...</span>
+  <button class="btn" id="healing-btn" data-action="set_healing" data-target="off">...</button>
+  <p class="muted">OFF = the healer still detects and reports problems but repairs nothing. Break things, watch
+     them stay broken, then turn healing back ON and watch it repair them.</p>
+</div>
+
+<h2>Inject faults into services</h2>
+<table>
+  <thead><tr><th>Service</th><th>Status</th><th>Faults</th></tr></thead>
+  {% for s in services %}
+  <tr>
+    <td><b>{{ s.name }}</b></td><td id="st-{{ s.name }}"></td>
+    <td>
+      <button class="btn warn" data-action="chaos_kill" data-target="{{ s.name }}">Kill (SIGKILL)</button>
+      <button class="btn warn" data-action="chaos_freeze" data-target="{{ s.name }}">Freeze (SIGSTOP)</button>
+      {% if s.leakable %}<button class="btn warn" data-action="chaos_leak" data-target="{{ s.name }}">Leak memory</button>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Inject faults into protected files</h2>
+<table>
+  <thead><tr><th>File</th><th>Faults</th></tr></thead>
+  {% for path in files %}
+  <tr>
+    <td>{{ path }}</td>
+    <td>
+      <button class="btn warn" data-action="chaos_file" data-target="{{ path }}" data-args='{"how": "delete"}'>Delete</button>
+      <button class="btn warn" data-action="chaos_file" data-target="{{ path }}" data-args='{"how": "corrupt"}'>Corrupt</button>
+      <button class="btn warn" data-action="chaos_file" data-target="{{ path }}" data-args='{"how": "tamper"}'>Tamper</button>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Healing OFF vs ON (last run)</h2>
+{% if comparison %}
+<table>
+  <thead><tr><th>Fault</th><th>Healing OFF</th><th>Healing ON</th></tr></thead>
+  {% for r in comparison.rows %}
+  <tr><td>{{ r.fault }}</td>
+      <td><span class="badge {% if r.off_bad %}b-failed{% else %}b-ok{% endif %}">{{ r.off }}</span></td>
+      <td><span class="badge b-ok">{{ r.on }}</span></td></tr>
+  {% endfor %}
+</table>
+<p class="muted">Run at {{ comparison.when }}</p>
+{% else %}
+<p class="muted">No run yet. In a terminal: <code>python3 -m healer.compare</code></p>
+{% endif %}
+{% endblock %}
+{% block script %}
+<script>
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    const on = s.healer.healing;
+    $('healing-badge').className = 'badge ' + (on ? 'b-running' : 'b-failed');
+    $('healing-badge').textContent = on ? 'HEALING ON' : 'HEALING OFF';
+    const btn = $('healing-btn');
+    btn.dataset.target = on ? 'off' : 'on';
+    btn.textContent = on ? 'Turn healing OFF' : 'Turn healing ON';
+    s.services.forEach(x => { const el = $('st-' + x.name); if (el) el.innerHTML = badge(x.status); });
+  } catch (err) { /* the dashboard server is down; keep the last values */ }
+}
+refresh(); setInterval(refresh, 1000);
+</script>
+{% endblock %}

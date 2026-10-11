@@ -22,8 +22,9 @@
 const clock = ts => new Date(ts * 1000).toLocaleTimeString();
 function renderHealer(h) {
   const el = $('healer');
-  el.className = h.running ? 'up' : 'down';
-  el.textContent = h.running ? `Healer running (pid ${h.pid})` : 'Healer NOT running - start it with: python3 -m healer';
+  if (!h.running) { el.className = 'down'; el.textContent = 'Healer NOT running - start it with: python3 -m healer'; return; }
+  el.className = h.healing ? 'up' : 'warn';
+  el.textContent = `Healer running (pid ${h.pid}) · Healing ${h.healing ? 'ON' : 'OFF (detect-only: nothing is repaired)'}`;
 }
 function renderServices(list) {
   $('services').innerHTML = list.map(s => {

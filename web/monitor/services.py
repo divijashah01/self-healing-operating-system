@@ -37,7 +37,8 @@ def healer_info(log: EventLog) -> dict:
     age = time.time() - last if last else None
     return {"running": age is not None and age < 5,
             "last_seen_age": age,
-            "pid": log.get_meta("healer_pid")}
+            "pid": log.get_meta("healer_pid"),
+            "healing": log.get_meta("healing") != "off",}
 
 
 def snapshot(log: EventLog, event_limit: int = 40) -> dict:
