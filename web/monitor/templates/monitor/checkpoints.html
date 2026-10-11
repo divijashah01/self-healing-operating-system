@@ -1,0 +1,17 @@
+{% extends "monitor/base.html" %}
+{% block title %}Checkpoints{% endblock %}
+{% block content %}
+<h2>State checkpoints</h2>
+{% for item in items %}
+<div class="card">
+  <p><b>{{ item.service }}</b></p>
+  <table>
+    <thead><tr><th>Checkpoint</th><th>Status</th><th>Saved</th><th>Size</th><th>State</th><th>Note</th></tr></thead>
+    {% for r in item.rows %}
+    <tr><td><code>{{ r.name }}</code></td><td><span class="badge b-{{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.when }}</td><td>{{ r.size }} B</td><td><code>{{ r.state }}</code></td><td>{{ r.note }}</td></tr>
+    {% empty %}<tr><td colspan="6" class="muted">No checkpoints yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% empty %}<p class="muted">No service has checkpointing enabled.</p>{% endfor %}
+{% endblock %}

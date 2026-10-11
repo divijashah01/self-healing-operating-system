@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Self-Healing OS · {% block title %}Dashboard{% endblock %}</title>
+<style>
+  :root { --bg:#0f1419; --card:#1a2129; --text:#e6e9ec; --muted:#8b98a5; --line:#2a343e;
+          --ok:#2ea043; --warn:#d29922; --bad:#f85149; --idle:#6e7681; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  nav { display:flex; gap:20px; align-items:center; padding:12px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+  nav a { color:var(--muted); text-decoration:none; } nav a:hover, nav a.active { color:var(--text); }
+  nav .brand { font-weight:600; color:var(--text); margin-right:12px; }
+  main { padding:8px 24px 40px; max-width:1200px; margin:0 auto; }
+  h2 { font-size:12px; margin:24px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); }
+  th, td { text-align:left; padding:7px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  code { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); padding:14px 16px; margin:14px 0; }
+  .muted { color:var(--muted); }
+  .badge { padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; color:#fff; background:var(--idle); }
+  .b-running,.b-ok,.b-valid,.b-done { background:var(--ok); }
+  .b-restarting,.b-modified,.b-pending,.b-warning { background:var(--warn); }
+  .b-quarantined,.b-crashed,.b-missing,.b-failed,.b-invalid,.b-error,.b-critical { background:var(--bad); }
+  .b-info { background:#30363d; }
+  #healer { padding:10px 16px; margin:16px 0 0; border-left:4px solid var(--idle); background:var(--card); }
+  #healer.up { border-color:var(--ok); } #healer.down { border-color:var(--bad); }
+  .btn { background:#21262d; color:var(--text); border:1px solid var(--line); padding:3px 10px; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn:hover { border-color:var(--accent); } .btn.warn { border-color:var(--warn); } .btn.primary { background:#238636; border-color:#238636; }
+  textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); padding:8px; font:12px ui-monospace,monospace; margin:6px 0; }
+  #toast { position:fixed; right:20px; bottom:20px; padding:10px 16px; background:var(--card); border:1px solid var(--line); display:none; max-width:420px; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Self-Healing OS</span>
+  <a href="/" class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
+  <a href="/files/" class="{% if page == 'files' %}active{% endif %}">Files</a>
+  <a href="/checkpoints/" class="{% if page == 'checkpoints' %}active{% endif %}">Checkpoints</a>
+</nav>
+<main>{% block content %}{% endblock %}</main>
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const badge = t => `<span class="badge b-${esc(t)}">${esc(t)}</span>`;
+const csrf = () => (document.cookie.split('; ').find(c => c.startsWith('csrftoken=')) || '').split('=')[1] || '';
+let toastTimer;
+function toast(text, bad) {
+  const t = $('toast'); t.textContent = text; t.style.display = 'block';
+  t.style.borderColor = bad ? 'var(--bad)' : 'var(--ok)';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 5000);
+}
+async function sendCommand(action, target, args) {
+  const r = await fetch('/api/command', {method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf()},
+    body: JSON.stringify({action, target, args: args || {}})});
+  const j = await r.json();
+  if (!r.ok) { toast('Error: ' + (j.error || r.status), true); return null; }
+  toast('Queued #' + j.id + ' ...');
+  for (let i = 0; i < 20; i++) {                      // wait up to ~10s for the healer
+    await sleep(500);
+    const c = await (await fetch('/api/command/' + j.id)).json();
+    if (c.status !== 'pending') { toast((c.status === 'done' ? '✓ ' : '✗ ') + c.result, c.status !== 'done'); return c; }
+  }
+  toast('The healer did not respond (is it running?)', true);
+  return null;
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('button[data-action]');
+  if (!b) return;
+  const args = b.dataset.args ? JSON.parse(b.dataset.args) : {};
+  if (b.dataset.content) args.content = document.querySelector(b.dataset.content).value;
+  const c = await sendCommand(b.dataset.action, b.dataset.target, args);
+  if (c && c.status === 'done' && b.dataset.reload) location.reload();
+});
+</script>
+{% block script %}{% endblock %}
+</body>
+</html>

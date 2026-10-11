@@ -1,0 +1,28 @@
+{% extends "monitor/base.html" %}
+{% block title %}Files{% endblock %}
+{% block content %}
+<h2>Protected files</h2>
+{% for f in files %}
+<div class="card">
+  <p><b>{{ f.path }}</b> <span class="badge b-{{ f.state }}">{{ f.state }}</span>
+     <span class="muted">&nbsp;mode: {{ f.mode }}</span></p>
+  <table>
+    <thead><tr><th></th><th>Version</th><th>SHA-256</th><th>Size</th><th>Saved</th><th>Note</th><th></th></tr></thead>
+    {% for v in f.versions %}
+    <tr>
+      <td>{% if v.is_baseline %}&#9733; baseline{% endif %}</td>
+      <td>v{{ v.version }}</td><td><code>{{ v.sha256|slice:":12" }}</code></td>
+      <td>{{ v.size }} B</td><td>{{ v.when }}</td><td>{{ v.note }}</td>
+      <td><button class="btn" data-action="restore_file" data-target="{{ f.path }}"
+                  data-args='{"version": {{ v.version }}}' data-reload="1">Restore</button></td>
+    </tr>
+    {% empty %}<tr><td colspan="7" class="muted">No versions yet (the healer records v1 on its first pass).</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted">Approve a new version (applied atomically; the guard treats it as the new baseline):</p>
+  <textarea id="content-{{ forloop.counter }}" rows="6">{{ f.baseline_text }}</textarea>
+  <button class="btn primary" data-action="update_file" data-target="{{ f.path }}"
+          data-content="#content-{{ forloop.counter }}" data-reload="1">Approve &amp; apply</button>
+</div>
+{% empty %}<p class="muted">No protected files configured.</p>{% endfor %}
+{% endblock %}

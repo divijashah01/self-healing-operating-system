@@ -1,0 +1,59 @@
+{% extends "monitor/base.html" %}
+{% block content %}
+<div id="healer">connecting...</div>
+<h2>Services</h2>
+<table>
+  <thead><tr><th>Service</th><th>Status</th><th>PID</th><th>Restarts</th><th>CPU %</th><th>RSS MB</th><th>Actions</th></tr></thead>
+  <tbody id="services"></tbody>
+</table>
+<h2>Operator commands</h2>
+<table>
+  <thead><tr><th>#</th><th>Time</th><th>Action</th><th>Target</th><th>Status</th><th>Result</th></tr></thead>
+  <tbody id="commands"></tbody>
+</table>
+<h2>Event timeline</h2>
+<table>
+  <thead><tr><th>Time</th><th>Severity</th><th>Source</th><th>Event</th><th>Message</th></tr></thead>
+  <tbody id="events"></tbody>
+</table>
+{% endblock %}
+{% block script %}
+<script>
+const clock = ts => new Date(ts * 1000).toLocaleTimeString();
+function renderHealer(h) {
+  const el = $('healer');
+  el.className = h.running ? 'up' : 'down';
+  el.textContent = h.running ? `Healer running (pid ${h.pid})` : 'Healer NOT running - start it with: python3 -m healer';
+}
+function renderServices(list) {
+  $('services').innerHTML = list.map(s => {
+    const t = esc(s.name);
+    const btns = [`<button class="btn" data-action="restart_service" data-target="${t}">Restart</button>`];
+    btns.push(s.status === 'running'
+      ? `<button class="btn" data-action="stop_service" data-target="${t}">Stop</button>`
+      : `<button class="btn" data-action="start_service" data-target="${t}">Start</button>`);
+    if (s.status === 'quarantined')
+      btns.push(`<button class="btn warn" data-action="reset_circuit" data-target="${t}">Reset circuit</button>`);
+    return `<tr><td><b>${t}</b></td><td>${badge(s.status)}</td><td>${s.pid ?? '-'}</td><td>${s.restarts}</td>
+      <td>${s.cpu_percent == null ? '-' : s.cpu_percent.toFixed(1)}</td>
+      <td>${s.rss_mb == null ? '-' : s.rss_mb.toFixed(1)}</td><td>${btns.join(' ')}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">No services yet. Is the healer running?</td></tr>';
+}
+function renderCommands(list) {
+  $('commands').innerHTML = list.map(c => `<tr><td>${c.id}</td><td>${clock(c.ts)}</td><td>${esc(c.action)}</td>
+    <td>${esc(c.target)}</td><td>${badge(c.status)}</td><td>${esc(c.result)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">None yet.</td></tr>';
+}
+function renderEvents(list) {
+  $('events').innerHTML = list.map(e => `<tr><td>${clock(e.ts)}</td><td>${badge(e.severity)}</td>
+    <td>${esc(e.service || 'healer')}</td><td><code>${esc(e.event_type)}</code></td><td>${esc(e.message)}</td></tr>`).join('');
+}
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    renderHealer(s.healer); renderServices(s.services); renderCommands(s.commands); renderEvents(s.events);
+  } catch (err) { $('healer').className = 'down'; $('healer').textContent = 'Dashboard cannot reach its server'; }
+}
+refresh(); setInterval(refresh, 1000);
+</script>
+{% endblock %}

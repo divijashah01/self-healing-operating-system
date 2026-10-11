@@ -27,3 +27,6 @@ state, with a Django dashboard for demo.
     python3 -m healer.files      # list protected files and versions
     python3 -m healer.files approve data/critical/app.conf --from new.conf
     python3 -m healer.files restore data/critical/app.conf --version 1
+
+    cd web && python3 manage.py runserver    # dashboard at http://localhost:8000 (local only, no login)
+    cd web && python3 manage.py test         # dashboard tests
