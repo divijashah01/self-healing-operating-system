@@ -102,6 +102,9 @@ class EventType:
     CHECKPOINT_REJECTED = "checkpoint_rejected"
     COMMAND_EXECUTED = "command_executed"
     COMMAND_FAILED = "command_failed"
+    RESOURCE_LIMIT = "resource_limit"
+    HEALING_CHANGED = "healing_changed"
+    CHAOS_INJECTED = "chaos_injected"
 
 
 class EventLog:

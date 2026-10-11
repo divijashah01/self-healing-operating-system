@@ -99,6 +99,17 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigError, msg=bad):
                     load_config(p)
 
+    def test_memory_limit_parsed_and_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n  - {name: a, command: [x], memory_limit_mb: 80}\n"
+                           "  - {name: b, command: [y]}\n")
+            a, b = load_config(p).services
+        self.assertEqual((a.memory_limit_mb, b.memory_limit_mb), (80.0, None))
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n  - {name: a, command: [x], memory_limit_mb: -5}\n")
+            with self.assertRaises(ConfigError):
+                load_config(p)
+
 
 if __name__ == "__main__":
     unittest.main()

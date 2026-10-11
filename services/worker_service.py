@@ -6,11 +6,13 @@ import signal
 import sys
 import time
 
+from chaos import Chaos
 from checkpoint import Checkpointer
 from heartbeat import Heartbeat
 
 # In-memory state. Checkpointed periodically; restored by the healer after a crash.
 state = {"processed": 0, "last_job": None}
+leaked = []          # chaos: memory held on purpose when the 'leak' flag is set
 
 
 def main():
@@ -23,6 +25,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # clean stop
     pid = os.getpid()
     heartbeat = Heartbeat()
+    chaos = Chaos()
     checkpointer = Checkpointer("worker")
     restored = checkpointer.load_restored()
     if restored is not None:
@@ -36,6 +39,10 @@ def main():
             state["last_job"] = f"job-{state['processed']}"
             print(f"[worker pid={pid}] processed={state['processed']} "
                   f"last_job={state['last_job']}", flush=True)
+            if chaos.flag("leak"):
+                if not leaked:
+                    print(f"[worker pid={pid}] CHAOS: memory leak started", flush=True)
+                leaked.append(b"x" * (8 * 1024 * 1024))   # filled bytes => RSS really grows
             if state["processed"] % args.checkpoint_every == 0:
                 saved = checkpointer.save(state)
                 if saved:

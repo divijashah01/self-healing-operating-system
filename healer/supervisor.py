@@ -75,11 +75,13 @@ class ManagedService:
     kill_reason: Optional[str] = None     # "hung" while a healer-initiated kill is in progress
     kill_sent: bool = False               # SIGKILL already sent
     restored_from: Optional[Path] = None      # checkpoint this run was started from
+    reported: set = field(default_factory=set)   # problems already reported while healing is OFF
 
 
 class Supervisor:
     def __init__(self, services, eventlog: EventLog, logs_dir,
-                 clock: Callable[[], float] = time.time, heartbeat_dir=None, checkpoint_dir=None):
+                 clock: Callable[[], float] = time.time, heartbeat_dir=None, checkpoint_dir=None,
+                 chaos_dir=None):
         self.eventlog = eventlog
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -92,6 +94,8 @@ class Supervisor:
         self._reported_zombies = set()
         self.checkpoints = CheckpointManager(
             eventlog, checkpoint_dir or self.logs_dir.parent / "checkpoints")
+        self.chaos_dir = Path(chaos_dir) if chaos_dir else self.logs_dir.parent / "chaos"
+        self.healing = True      # False = detect and report only, never repair
 
     # ---- helpers -------------------------------------------------------
     def _event(self, event_type, service, severity, message, **details):
@@ -117,6 +121,7 @@ class Supervisor:
             env["HEALER_CHECKPOINT_KEEP"] = str(svc.config.checkpoint.keep)
             if restore_path is not None:
                 env["HEALER_RESTORE_FROM"] = str(restore_path)
+        env["HEALER_CHAOS_DIR"] = str(self.chaos_dir / svc.config.name)
         return env
 
     # ---- lifecycle -----------------------------------------------------
@@ -129,8 +134,13 @@ class Supervisor:
         now = self.clock()
         log_path = self.logs_dir / f"{name}.log"
         chosen = None
-        if svc.config.checkpoint is not None:
+        if svc.config.checkpoint is not None and self.healing:
             chosen = self.checkpoints.pick(name)      # newest checkpoint that validates
+        svc.reported.clear()
+        flags = self.chaos_dir / name
+        if flags.is_dir():
+            for flag in flags.iterdir():
+                flag.unlink(missing_ok=True)      # chaos flags never survive a restart
         try:
             with open(log_path, "ab") as out:
                 svc.proc = subprocess.Popen(
@@ -199,6 +209,8 @@ class Supervisor:
                 returncode = svc.proc.poll()  # also reaps the child
                 if returncode is None:
                     self._sample(svc)
+                    if self._check_memory(svc, now):
+                        continue
                     self._maybe_mark_stable(svc, now)
                     self._check_heartbeat(svc, now)
                 else:
@@ -237,7 +249,16 @@ class Supervisor:
         except OSError:
             last = 0.0                        # never beat since start
         age = now - max(last, svc.started_at)  # ignore stale files from a previous run
-        if age > hb.timeout:
+        if age <= hb.timeout:
+            svc.reported.discard("hang")
+        elif not self.healing:
+            if "hang" not in svc.reported:        # report once, take no action
+                svc.reported.add("hang")
+                self._event(EventType.SERVICE_HUNG, svc.config.name, Severity.ERROR,
+                            f"no heartbeat for {age:.1f}s (timeout {hb.timeout:g}s); "
+                            f"healing is OFF, no action",
+                            pid=svc.proc.pid, age_s=round(age, 1))
+        else:
             self._declare_hung(svc, now, age)
 
     def _declare_hung(self, svc: ManagedService, now: float, age: float) -> None:
@@ -283,7 +304,7 @@ class Supervisor:
         policy = svc.config.restart.policy
         wants_restart = ((status == Status.CRASHED and policy != "never")
                          or (status == Status.STOPPED and policy == "always"))
-        if wants_restart:
+        if wants_restart and self.healing:
             self._schedule_restart(svc, now)
         else:
             svc.next_restart_at = None
@@ -320,6 +341,8 @@ class Supervisor:
                     failures=len(svc.failure_times), cooldown_s=p.cooldown)
 
     def _maybe_restart(self, svc: ManagedService, now: float) -> None:
+        if not self.healing:
+            return
         if svc.next_restart_at is None or now < svc.next_restart_at:
             return
         if svc.status == Status.QUARANTINED:      # cooldown over: one probe restart
@@ -359,7 +382,8 @@ class Supervisor:
 
 
     # ---- operator actions (called by the command executor) -------------
-    def _terminate(self, svc: ManagedService, grace: float = 3.0) -> None:
+    def _terminate(self, svc: ManagedService, grace: float = 3.0,
+                   reason: str = "operator") -> None:
         """Stop a running service: SIGTERM (+SIGCONT), then SIGKILL after `grace` seconds."""
         if svc.proc is None:
             return
@@ -375,7 +399,7 @@ class Supervisor:
         svc.hang_since, svc.kill_reason, svc.kill_sent = None, None, False
         svc.restored_from = None
         self._event(EventType.SERVICE_STOPPED, name, Severity.INFO,
-                    "stopped by operator", pid=pid)
+                    f"stopped by {reason}", pid=pid)
 
     @staticmethod
     def _reset_counters(svc: ManagedService) -> None:
@@ -430,3 +454,61 @@ class Supervisor:
                 self._event(EventType.ZOMBIE_DETECTED, None, Severity.WARNING,
                             f"zombie pid {child.pid} (parent {ppid}) awaiting its parent",
                             pid=child.pid, ppid=ppid)
+
+
+    # ---- memory limit --------------------------------------------------
+    def _check_memory(self, svc: ManagedService, now: float) -> bool:
+        """Enforce the per-service RSS limit. Returns True if the service was killed."""
+        limit = svc.config.memory_limit_mb
+        if limit is None or svc.ps is None:
+            return False
+        try:
+            rss_mb = svc.ps.memory_info().rss / (1024 * 1024)
+        except psutil.NoSuchProcess:
+            return False
+        if rss_mb <= limit:
+            svc.reported.discard("memory")
+            return False
+        name = svc.config.name
+        if not self.healing:
+            if "memory" not in svc.reported:      # report once, take no action
+                svc.reported.add("memory")
+                self._event(EventType.RESOURCE_LIMIT, name, Severity.ERROR,
+                            f"memory {rss_mb:.0f} MB exceeds limit {limit:g} MB; "
+                            f"healing is OFF, no action",
+                            rss_mb=round(rss_mb, 1), limit_mb=limit)
+            return False
+        self._event(EventType.RESOURCE_LIMIT, name, Severity.ERROR,
+                    f"memory {rss_mb:.0f} MB exceeds limit {limit:g} MB; restarting",
+                    rss_mb=round(rss_mb, 1), limit_mb=limit)
+        self._terminate(svc, reason="memory limit")
+        svc.status = Status.CRASHED
+        self._after_exit(svc, Status.CRASHED, now)   # counts as a failure: backoff / breaker
+        return True
+
+    # ---- healing switch and chaos --------------------------------------
+    def set_healing(self, enabled: bool) -> None:
+        if enabled == self.healing:
+            return
+        self.healing = enabled
+        now = self.clock()
+        for svc in self.services.values():
+            if svc.proc is not None:
+                continue
+            if enabled and svc.status == Status.CRASHED and svc.config.restart.policy != "never":
+                self._schedule_restart(svc, now)      # repair what broke while healing was off
+            elif not enabled and svc.status in (Status.RESTARTING, Status.QUARANTINED):
+                svc.status, svc.next_restart_at = Status.CRASHED, None   # cancel pending repairs
+                self.eventlog.set_state(svc.config.name, svc.status, restarts=svc.restarts)
+
+    def inject_signal(self, name: str, sig: int) -> int:
+        svc = self.services[name]
+        if svc.proc is None:
+            raise ValueError(f"{name} is not running")
+        self._signal(svc, sig)
+        return svc.proc.pid
+
+    def set_chaos_flag(self, name: str, flag: str) -> None:
+        directory = self.chaos_dir / self.services[name].config.name
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / flag).touch()

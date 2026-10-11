@@ -54,6 +54,7 @@ class ServiceConfig:
     restart: RestartPolicy = field(default_factory=RestartPolicy)
     heartbeat: Optional[HeartbeatPolicy] = None
     checkpoint: Optional[CheckpointPolicy] = None
+    memory_limit_mb: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,18 @@ def _parse_protected(entry) -> ProtectedFile:
     return ProtectedFile(path=_resolve(str(entry["path"])).resolve(), mode=mode,
                          keep_versions=keep, validate=validate)
 
+
+def _parse_memory_limit(owner: str, raw) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{owner}: memory_limit_mb must be a number") from None
+    if value <= 0:
+        raise ConfigError(f"{owner}: memory_limit_mb must be > 0")
+    return value
+
 def load_config(path: Optional[Path] = None) -> Config:
     path = Path(path) if path else DEFAULT_CONFIG_PATH
     with open(path, "r", encoding="utf-8") as fh:
@@ -181,6 +194,7 @@ def load_config(path: Optional[Path] = None) -> Config:
             restart=_parse_restart(f"service '{name}'", entry.get("restart"), base=defaults),
             heartbeat=_parse_heartbeat(f"service '{name}'", entry.get("heartbeat")),
             checkpoint=_parse_checkpoint(f"service '{name}'", entry.get("checkpoint")),
+            memory_limit_mb=_parse_memory_limit(f"service '{name}'", entry.get("memory_limit_mb")),
         ))
     if not services:
         raise ConfigError("no services configured")

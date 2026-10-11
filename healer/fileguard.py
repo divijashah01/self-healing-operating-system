@@ -22,6 +22,7 @@ class FileGuard:
         self.vault = vault
         self.eventlog = eventlog
         self._reported = {}        # path -> observed state already reported (avoids log spam)
+        self.healing = True
 
     def check(self) -> None:
         """One pass over all protected files; call every poll interval."""
@@ -45,7 +46,7 @@ class FileGuard:
         if self._reported.get(path) != observed:    # report each distinct bad state once
             self._reported[path] = observed
             self._report(pf, result)
-        if pf.mode == "restore":
+        if pf.mode == "restore" and self.healing:
             self.vault.restore(path, reason="auto-heal")
             self._reported.pop(path, None)
 
