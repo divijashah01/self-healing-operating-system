@@ -357,6 +357,54 @@ class Supervisor:
                     "circuit manually reset; restarting")
         return True
 
+
+    # ---- operator actions (called by the command executor) -------------
+    def _terminate(self, svc: ManagedService, grace: float = 3.0) -> None:
+        """Stop a running service: SIGTERM (+SIGCONT), then SIGKILL after `grace` seconds."""
+        if svc.proc is None:
+            return
+        name, pid = svc.config.name, svc.proc.pid
+        self._signal(svc, signal.SIGTERM)
+        self._signal(svc, signal.SIGCONT)
+        try:
+            svc.proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            self._signal(svc, signal.SIGKILL)
+            svc.proc.wait()
+        svc.proc = svc.ps = None
+        svc.hang_since, svc.kill_reason, svc.kill_sent = None, None, False
+        svc.restored_from = None
+        self._event(EventType.SERVICE_STOPPED, name, Severity.INFO,
+                    "stopped by operator", pid=pid)
+
+    @staticmethod
+    def _reset_counters(svc: ManagedService) -> None:
+        svc.failure_times.clear()
+        svc.consecutive_failures = 0
+        svc.probation = False
+        svc.next_restart_at = None
+
+    def stop(self, name: str) -> None:
+        svc = self.services[name]
+        self._terminate(svc)
+        self._reset_counters(svc)
+        svc.status = Status.STOPPED               # a stopped service is never auto-restarted
+        self.eventlog.set_state(name, Status.STOPPED, restarts=svc.restarts)
+
+    def restart(self, name: str) -> bool:
+        svc = self.services[name]
+        self._terminate(svc)
+        self._reset_counters(svc)                 # operator intent, not a failure
+        svc.restarts += 1
+        return self.start(svc, restart=True)
+
+    def start_service(self, name: str) -> bool:
+        svc = self.services[name]
+        if svc.proc is not None:
+            return False
+        self._reset_counters(svc)
+        return self.start(svc)
+
     # ---- zombies -------------------------------------------------------
     def _reap_zombies(self) -> None:
         managed = {s.proc.pid for s in self.services.values() if s.proc}

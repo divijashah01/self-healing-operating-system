@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -48,6 +48,23 @@ CREATE TABLE IF NOT EXISTS file_versions (
     UNIQUE(path, version)
 );
 CREATE INDEX IF NOT EXISTS idx_file_versions_path ON file_versions(path, version);
+
+CREATE TABLE IF NOT EXISTS commands (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL NOT NULL,
+    action      TEXT NOT NULL,
+    target      TEXT,
+    args        TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    result      TEXT,
+    finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status, id);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -83,6 +100,8 @@ class EventType:
     FILE_BASELINED = "file_baselined"
     FILE_APPROVED = "file_approved"
     CHECKPOINT_REJECTED = "checkpoint_rejected"
+    COMMAND_EXECUTED = "command_executed"
+    COMMAND_FAILED = "command_failed"
 
 
 class EventLog:
@@ -217,3 +236,56 @@ class EventLog:
             return self._conn.execute(
                 "SELECT COUNT(*) FROM file_versions WHERE blob_path = ?",
                 (blob_path,)).fetchone()[0]
+
+
+    # ---- command channel (dashboard -> healer) -------------------------
+    @staticmethod
+    def _command(row) -> dict:
+        cmd = dict(row)
+        cmd["args"] = json.loads(cmd["args"]) if cmd["args"] else {}
+        return cmd
+
+    def enqueue_command(self, action: str, target: Optional[str] = None,
+                        args: Optional[dict] = None) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO commands(ts, action, target, args) VALUES (?, ?, ?, ?)",
+                (time.time(), action, target, json.dumps(args) if args else None))
+            return cur.lastrowid
+
+    def pending_commands(self) -> list:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM commands WHERE status = 'pending' ORDER BY id").fetchall()
+        return [self._command(r) for r in rows]
+
+    def get_command(self, command_id: int) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM commands WHERE id = ?", (command_id,)).fetchone()
+        return self._command(row) if row else None
+
+    def recent_commands(self, limit: int = 10) -> list:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM commands ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [self._command(r) for r in rows]
+
+    def finish_command(self, command_id: int, ok: bool, result: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE commands SET status = ?, result = ?, finished_at = ? WHERE id = ?",
+                ("done" if ok else "failed", result, time.time(), command_id))
+
+    # ---- small key/value store (healer liveness etc.) ------------------
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO meta(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+    def get_meta(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
