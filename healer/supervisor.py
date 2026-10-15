@@ -213,6 +213,7 @@ class Supervisor:
                         continue
                     self._maybe_mark_stable(svc, now)
                     self._check_heartbeat(svc, now)
+                    self._check_checkpoint_trust(svc, now)
                 else:
                     self._handle_exit(svc, returncode, now)
             elif svc.status in (Status.RESTARTING, Status.QUARANTINED):
@@ -292,10 +293,13 @@ class Supervisor:
             self._event(EventType.SERVICE_STOPPED, name, Severity.INFO, reason,
                         pid=pid, exit_code=returncode, uptime_s=uptime)
         cp = svc.config.checkpoint
-        if (status == Status.CRASHED and cp is not None and svc.restored_from is not None
+        if (status == Status.CRASHED and cp is not None
                 and uptime is not None and uptime < cp.trust_after):
-            self.checkpoints.reject(name, svc.restored_from,
-                                    f"service crashed {uptime:.1f}s after restoring it")
+            if svc.restored_from is not None:
+                self.checkpoints.suspect(name, svc.restored_from,
+                                         f"service crashed {uptime:.1f}s after restoring it")
+            else:                       # crashed even without a checkpoint: not the state's fault
+                self.checkpoints.exonerate(name)
         svc.restored_from = None
         self._after_exit(svc, status, now)
 
@@ -512,3 +516,11 @@ class Supervisor:
         directory = self.chaos_dir / self.services[name].config.name
         directory.mkdir(parents=True, exist_ok=True)
         (directory / flag).touch()
+
+    def _check_checkpoint_trust(self, svc: ManagedService, now: float) -> None:
+        cp = svc.config.checkpoint
+        if cp is None or "trusted" in svc.reported or svc.started_at is None:
+            return
+        if now - svc.started_at >= cp.trust_after:
+            svc.reported.add("trusted")
+            self.checkpoints.condemn(svc.config.name)   # stable without them: they were bad

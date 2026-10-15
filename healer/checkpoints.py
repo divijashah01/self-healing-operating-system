@@ -71,3 +71,43 @@ class CheckpointManager:
             pass
         emit(self.eventlog, EventType.CHECKPOINT_REJECTED, Severity.WARNING,
              f"rejected {path.name}: {reason}", service=service, path=str(path))
+
+    def suspect(self, service: str, path: Path, reason: str) -> None:
+        """Set a checkpoint aside because the service crashed right after restoring it.
+        Not final: see exonerate() and condemn()."""
+        path = Path(path)
+        try:
+            os.replace(path, path.with_name(path.name + ".suspect"))
+        except OSError:
+            pass
+        emit(self.eventlog, EventType.CHECKPOINT_REJECTED, Severity.WARNING,
+             f"set aside {path.name} as suspect: {reason}", service=service, path=str(path))
+
+    def _rename_suspects(self, service: str, new_suffix: str) -> list:
+        moved = []
+        for path in sorted(self.dir_for(service).glob("ckpt-*.json.suspect")):
+            target = path.with_name(path.name[:-len(".suspect")] + new_suffix)
+            try:
+                os.replace(path, target)
+                moved.append(target.name)
+            except OSError:
+                pass
+        return moved
+
+    def exonerate(self, service: str) -> int:
+        """A start without any checkpoint crashed too: the suspects were not the cause."""
+        moved = self._rename_suspects(service, "")
+        if moved:
+            emit(self.eventlog, EventType.CHECKPOINT_EXONERATED, Severity.INFO,
+                 f"restored {len(moved)} suspect checkpoint(s): a start without them "
+                 f"crashed too, so they were not the cause", service=service)
+        return len(moved)
+
+    def condemn(self, service: str) -> int:
+        """The service runs stably without the suspects: they really were bad."""
+        moved = self._rename_suspects(service, ".bad")
+        if moved:
+            emit(self.eventlog, EventType.CHECKPOINT_REJECTED, Severity.WARNING,
+                 f"condemned {len(moved)} suspect checkpoint(s): the service runs fine "
+                 f"without them", service=service)
+        return len(moved)

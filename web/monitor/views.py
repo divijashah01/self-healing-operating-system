@@ -104,16 +104,14 @@ def checkpoints(request):
             status, note, state = "valid", "", ""
             if path.name.endswith(".bad"):
                 status = "rejected"
+            elif path.name.endswith(".suspect"):
+                status = "suspect"
             else:
                 try:
-                    validate(path, svc.name)
-                except ValueError as exc:
-                    status, note = "invalid", str(exc)
-            try:
-                state = json.dumps(json.loads(path.read_text(encoding="utf-8")).get("state"),
-                                   sort_keys=True)[:100]
-            except (OSError, ValueError):
-                pass
+                    state = json.dumps(json.loads(path.read_text(encoding="utf-8")).get("state"),
+                                    sort_keys=True)[:100]
+                except (OSError, ValueError):
+                    pass
             try:
                 stat = path.stat()
                 rows.append({"name": path.name, "status": status, "note": note,

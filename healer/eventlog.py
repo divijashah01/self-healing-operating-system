@@ -105,6 +105,8 @@ class EventType:
     RESOURCE_LIMIT = "resource_limit"
     HEALING_CHANGED = "healing_changed"
     CHAOS_INJECTED = "chaos_injected"
+    CHECKPOINT_EXONERATED = "checkpoint_exonerated"
+    SERVICE_WAITING = "service_waiting"
 
 
 class EventLog:

@@ -18,6 +18,12 @@ WANTS_SEQ2 = ("import os, sys; "
 CRASH_IF_SEQ2 = ("import os, sys; "
                  "sys.exit(3 if '00000002' in os.environ.get('HEALER_RESTORE_FROM', '') else 0)")
 
+ALWAYS_CRASH = "import sys; sys.exit(3)"
+CRASH_IF_SEQ2_ELSE_RUN = ("import os, sys, time\n"
+                          "if '00000002' in os.environ.get('HEALER_RESTORE_FROM', ''):\n"
+                          "    sys.exit(3)\n"
+                          "time.sleep(60)\n")
+
 
 class RollbackTests(unittest.TestCase):
     def setUp(self):
@@ -65,7 +71,7 @@ class RollbackTests(unittest.TestCase):
         svc = self.make(CRASH_IF_SEQ2, restart=RestartPolicy())
         self.wait_exit(svc)                              # restored from #2 -> crashes
         self.assertEqual(svc.status, Status.RESTARTING)
-        self.assertTrue(paths[1].with_name(paths[1].name + ".bad").exists())
+        self.assertTrue(paths[1].with_name(paths[1].name + ".suspect").exists())
         self.clock.advance(1.5)
         self.sup.check()                                 # restarts, now restoring from #1
         self.wait_exit(svc)
@@ -82,6 +88,27 @@ class RollbackTests(unittest.TestCase):
         self.wait_exit(svc)
         self.assertEqual(svc.status, Status.CRASHED)
         self.assertTrue(path.exists())                   # not set aside
+
+    def test_unrelated_crash_exonerates_the_suspect_checkpoints(self):
+        paths = make_checkpoints(self.ckpt_root, "a", [{"n": 1}, {"n": 2}])
+        svc = self.make(ALWAYS_CRASH, restart=RestartPolicy(max_failures=10))
+        for _ in range(3):            # restore #2 -> crash, restore #1 -> crash, no checkpoint -> crash
+            self.wait_exit(svc)
+            self.clock.advance(100)
+            self.sup.check()
+        self.assertTrue(paths[0].exists() and paths[1].exists())    # both released again
+        self.assertEqual(list(self.ckpt_root.glob("a/*.suspect")), [])
+
+    def test_suspect_is_condemned_once_the_service_runs_stably(self):
+        paths = make_checkpoints(self.ckpt_root, "a", [{"n": 1}, {"n": 2}])
+        svc = self.make(CRASH_IF_SEQ2_ELSE_RUN, restart=RestartPolicy())
+        self.wait_exit(svc)                    # restored from #2 -> crash -> suspect
+        self.clock.advance(1.5)
+        self.sup.check()                       # restarts from #1 and keeps running
+        self.clock.advance(11)                 # past trust_after (10s)
+        self.sup.check()
+        self.assertTrue(paths[1].with_name(paths[1].name + ".bad").exists())
+        self.assertFalse(paths[1].with_name(paths[1].name + ".suspect").exists())
 
 
 if __name__ == "__main__":
