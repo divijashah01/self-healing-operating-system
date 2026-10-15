@@ -6,7 +6,8 @@ import time
 from django.conf import settings
 
 from healer.config import load_config
-from healer.eventlog import EventLog
+from healer.eventlog import EventLog, EventType
+from healer.metrics import compute
 
 _logs = {}
 _lock = threading.Lock()
@@ -46,3 +47,12 @@ def snapshot(log: EventLog, event_limit: int = 40) -> dict:
                 for c in log.recent_commands(8)]
     return {"now": time.time(), "healer": healer_info(log), "services": log.get_states(),
             "events": log.recent(event_limit), "commands": commands}
+
+def metrics(log: EventLog) -> dict:
+    """Metrics since the healer last started; only meaningful while it is running."""
+    if not healer_info(log)["running"]:
+        return {"available": False}
+    since = log.last_event_ts(EventType.HEALER_STARTED) or 0.0
+    result = compute(log.lifecycle_events(since), time.time())
+    result.update(available=True, since=since)
+    return result

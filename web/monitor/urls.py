@@ -10,4 +10,5 @@ urlpatterns = [
     path("api/command", views.api_command),
     path("api/command/<int:command_id>", views.api_command_status),
     path("chaos/", views.chaos),
+    path("api/metrics", views.api_metrics),
 ]

@@ -108,6 +108,10 @@ class EventType:
     CHECKPOINT_EXONERATED = "checkpoint_exonerated"
     SERVICE_WAITING = "service_waiting"
 
+LIFECYCLE_EVENTS = (EventType.SERVICE_STARTED, EventType.SERVICE_RESTARTED,
+                    EventType.SERVICE_CRASHED, EventType.SERVICE_HUNG,
+                    EventType.RESOURCE_LIMIT, EventType.SERVICE_STOPPED)
+
 
 class EventLog:
     def __init__(self, path):
@@ -294,3 +298,20 @@ class EventLog:
             row = self._conn.execute(
                 "SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
+
+    # ---- metrics support -----------------------------------------------
+    def lifecycle_events(self, since: float = 0.0) -> list:
+        """(ts, service, event_type) for service lifecycle events, oldest first."""
+        marks = ",".join("?" * len(LIFECYCLE_EVENTS))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, service, event_type FROM events WHERE service IS NOT NULL "
+                f"AND ts >= ? AND event_type IN ({marks}) ORDER BY id",
+                (since, *LIFECYCLE_EVENTS)).fetchall()
+        return [(r["ts"], r["service"], r["event_type"]) for r in rows]
+
+    def last_event_ts(self, event_type: str) -> Optional[float]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(ts) FROM events WHERE event_type = ?", (event_type,)).fetchone()
+        return row[0]

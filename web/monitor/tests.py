@@ -5,7 +5,7 @@ from pathlib import Path
 
 from django.test import SimpleTestCase, override_settings
 
-from healer.eventlog import EventLog
+from healer.eventlog import EventLog, EventType
 from monitor import services
 
 CONFIG = """\
@@ -83,3 +83,12 @@ class DashboardTests(SimpleTestCase):
         page = self.client.get("/chaos/")
         self.assertContains(page, "worker killed")
         self.assertContains(page, "1.9")
+
+    def test_metrics_api(self):
+        self.assertFalse(self.client.get("/api/metrics").json()["available"])   # healer not running
+        self.log.set_meta("healer_last_seen", str(time.time()))
+        self.log.log(EventType.HEALER_STARTED, message="started")
+        self.log.log(EventType.SERVICE_STARTED, service="a")
+        data = self.client.get("/api/metrics").json()
+        self.assertTrue(data["available"])
+        self.assertEqual(data["services"]["a"]["incidents"], 0)

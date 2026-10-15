@@ -1,6 +1,11 @@
 {% extends "monitor/base.html" %}
 {% block content %}
 <div id="healer">connecting...</div>
+<h2>Reliability (since the healer started)</h2>
+<table>
+  <thead><tr><th>Service</th><th>Uptime</th><th>Incidents</th><th>Recovered</th><th>MTTR</th><th>Heal success</th></tr></thead>
+  <tbody id="metrics"></tbody>
+</table>
 <h2>Services</h2>
 <table>
   <thead><tr><th>Service</th><th>Status</th><th>PID</th><th>Restarts</th><th>CPU %</th><th>RSS MB</th><th>Actions</th></tr></thead>
@@ -20,6 +25,21 @@
 {% block script %}
 <script>
 const clock = ts => new Date(ts * 1000).toLocaleTimeString();
+const fmtPct = v => v == null ? '-' : v + '%';
+const fmtSec = v => v == null ? '-' : v + ' s';
+function metricRow(name, m) {
+  return `<tr><td><b>${esc(name)}</b></td><td>${fmtPct(m.uptime_pct)}</td><td>${m.incidents}</td>
+    <td>${m.recovered}${m.open ? ` (+${m.open} open)` : ''}</td><td>${fmtSec(m.mttr_s)}</td><td>${fmtPct(m.success_pct)}</td></tr>`;
+}
+async function refreshMetrics() {
+  try {
+    const m = await (await fetch('/api/metrics')).json();
+    if (!m.available) { $('metrics').innerHTML = '<tr><td colspan="6" class="muted">Healer not running.</td></tr>'; return; }
+    $('metrics').innerHTML = metricRow('ALL SERVICES', m.overall)
+      + Object.entries(m.services).map(([n, s]) => metricRow(n, s)).join('');
+  } catch (err) { /* keep the last values */ }
+}
+refreshMetrics(); setInterval(refreshMetrics, 3000);
 function renderHealer(h) {
   const el = $('healer');
   if (!h.running) { el.className = 'down'; el.textContent = 'Healer NOT running - start it with: python3 -m healer'; return; }

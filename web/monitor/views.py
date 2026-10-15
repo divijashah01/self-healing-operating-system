@@ -150,3 +150,7 @@ def chaos(request):
         "comparison": comparison,
     }
     return render(request, "monitor/chaos.html", context)
+
+@require_GET
+def api_metrics(request):
+    return JsonResponse(services.metrics(services.get_log(services.get_config())))
