@@ -26,6 +26,10 @@ services:
   - name: filewriter
     command: ["python3", "services/file_service.py", "--dir", "data/critical"]
     heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
+  - name: client
+    command: ["python3", "services/client_service.py", "--url", "http://127.0.0.1:8001/health"]
+    heartbeat: {timeout: 5.0, startup_grace: 5.0, term_grace: 3.0}
+    depends_on: [web]
 
 protected_files:
   - path: data/critical/app.conf

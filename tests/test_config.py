@@ -14,7 +14,7 @@ def write(tmp, text):
 class ConfigTests(unittest.TestCase):
     def test_default_config_loads(self):
         cfg = load_config()
-        self.assertEqual([s.name for s in cfg.services], ["web", "worker", "filewriter"])
+        self.assertEqual([s.name for s in cfg.services], ["web", "worker", "filewriter", "client"])
         self.assertTrue(cfg.healer.db_path.is_absolute())
 
     def test_duplicate_names_rejected(self):
@@ -109,6 +109,25 @@ class ConfigTests(unittest.TestCase):
             p = write(tmp, "services:\n  - {name: a, command: [x], memory_limit_mb: -5}\n")
             with self.assertRaises(ConfigError):
                 load_config(p)
+
+    def test_depends_on_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, "services:\n  - {name: db, command: [x]}\n"
+                           "  - {name: app, command: [y], depends_on: [db]}\n")
+            db, app = load_config(p).services
+        self.assertEqual((db.depends_on, app.depends_on), ((), ("db",)))
+
+    def test_bad_dependencies_rejected(self):
+        bad_configs = [
+            "  - {name: a, command: [x], depends_on: [ghost]}",
+            "  - {name: a, command: [x], depends_on: [a]}",
+            "  - {name: a, command: [x], depends_on: [b]}\n  - {name: b, command: [y], depends_on: [a]}",
+        ]
+        for services in bad_configs:
+            with tempfile.TemporaryDirectory() as tmp:
+                p = write(tmp, "services:\n" + services + "\n")
+                with self.assertRaises(ConfigError, msg=services):
+                    load_config(p)
 
 
 if __name__ == "__main__":

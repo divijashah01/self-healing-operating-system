@@ -32,6 +32,7 @@ class Status:
     CRASHED = "crashed"          # crashed and not being restarted (policy 'never')
     RESTARTING = "restarting"    # waiting out the backoff delay
     QUARANTINED = "quarantined"  # circuit open: too many failures
+    WAITING = "waiting"      # waiting for a dependency to be running
 
 
 def classify_exit(returncode: int):
@@ -81,7 +82,7 @@ class ManagedService:
 class Supervisor:
     def __init__(self, services, eventlog: EventLog, logs_dir,
                  clock: Callable[[], float] = time.time, heartbeat_dir=None, checkpoint_dir=None,
-                 chaos_dir=None):
+                 chaos_dir=None, dep_settle: float = 2.0):
         self.eventlog = eventlog
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +97,7 @@ class Supervisor:
             eventlog, checkpoint_dir or self.logs_dir.parent / "checkpoints")
         self.chaos_dir = Path(chaos_dir) if chaos_dir else self.logs_dir.parent / "chaos"
         self.healing = True      # False = detect and report only, never repair
+        self.dep_settle = dep_settle   # a dependency must have run this long before dependents start
 
     # ---- helpers -------------------------------------------------------
     def _event(self, event_type, service, severity, message, **details):
@@ -127,7 +129,11 @@ class Supervisor:
     # ---- lifecycle -----------------------------------------------------
     def start_all(self) -> None:
         for svc in self.services.values():
-            self.start(svc)
+            if svc.config.depends_on:               # starts once its dependencies are running
+                svc.status = Status.WAITING
+                self.eventlog.set_state(svc.config.name, svc.status, restarts=svc.restarts)
+            else:
+                self.start(svc)
 
     def start(self, svc: ManagedService, restart: bool = False) -> bool:
         name = svc.config.name
@@ -196,7 +202,7 @@ class Supervisor:
             self.eventlog.set_state(name, Status.STOPPED, restarts=svc.restarts)
         # services waiting to restart / quarantined have no process, just pending state
         for svc in self.services.values():
-            if svc.status in (Status.RESTARTING, Status.QUARANTINED):
+            if svc.status in (Status.RESTARTING, Status.QUARANTINED, Status.WAITING):
                 svc.status, svc.next_restart_at = Status.STOPPED, None
                 self.eventlog.set_state(svc.config.name, Status.STOPPED, restarts=svc.restarts)
 
@@ -218,6 +224,9 @@ class Supervisor:
                     self._handle_exit(svc, returncode, now)
             elif svc.status in (Status.RESTARTING, Status.QUARANTINED):
                 self._maybe_restart(svc, now)
+            elif svc.status == Status.WAITING:
+                if self._deps_ready(svc, now):
+                    self._start_after_wait(svc)
         self._reap_zombies()
 
     def _sample(self, svc: ManagedService) -> None:
@@ -302,6 +311,7 @@ class Supervisor:
                 self.checkpoints.exonerate(name)
         svc.restored_from = None
         self._after_exit(svc, status, now)
+        self._cascade_down(name)
 
     # ---- restart policy / backoff / circuit breaker --------------------
     def _after_exit(self, svc: ManagedService, status: str, now: float) -> None:
@@ -349,6 +359,8 @@ class Supervisor:
             return
         if svc.next_restart_at is None or now < svc.next_restart_at:
             return
+        if not self._deps_ready(svc, now):
+            return                                   # backoff is over, but a dependency is down
         if svc.status == Status.QUARANTINED:      # cooldown over: one probe restart
             svc.probation = True
             svc.failure_times.clear()
@@ -415,6 +427,7 @@ class Supervisor:
     def stop(self, name: str) -> None:
         svc = self.services[name]
         self._terminate(svc)
+        self._cascade_down(name)
         self._reset_counters(svc)
         svc.status = Status.STOPPED               # a stopped service is never auto-restarted
         self.eventlog.set_state(name, Status.STOPPED, restarts=svc.restarts)
@@ -422,6 +435,7 @@ class Supervisor:
     def restart(self, name: str) -> bool:
         svc = self.services[name]
         self._terminate(svc)
+        self._cascade_down(name)
         self._reset_counters(svc)                 # operator intent, not a failure
         svc.restarts += 1
         return self.start(svc, restart=True)
@@ -488,6 +502,7 @@ class Supervisor:
         self._terminate(svc, reason="memory limit")
         svc.status = Status.CRASHED
         self._after_exit(svc, Status.CRASHED, now)   # counts as a failure: backoff / breaker
+        self._cascade_down(name)
         return True
 
     # ---- healing switch and chaos --------------------------------------
@@ -524,3 +539,48 @@ class Supervisor:
         if now - svc.started_at >= cp.trust_after:
             svc.reported.add("trusted")
             self.checkpoints.condemn(svc.config.name)   # stable without them: they were bad
+
+    # ---- dependencies --------------------------------------------------
+    def _deps_ready(self, svc: ManagedService, now: float) -> bool:
+        """All dependencies running, each for at least `dep_settle` seconds."""
+        for dep_name in svc.config.depends_on:
+            dep = self.services[dep_name]
+            if (dep.status != Status.RUNNING or dep.started_at is None
+                    or now - dep.started_at < self.dep_settle):
+                return False
+        return True
+
+    def _all_dependents(self, name: str) -> list:
+        """Services that depend on `name`, directly or transitively."""
+        seen, queue, found = set(), [name], []
+        while queue:
+            current = queue.pop()
+            for svc in self.services.values():
+                n = svc.config.name
+                if current in svc.config.depends_on and n not in seen:
+                    seen.add(n)
+                    found.append(svc)
+                    queue.append(n)
+        return found
+
+    def _cascade_down(self, name: str) -> None:
+        """`name` went down: stop what depends on it. Dependents wait and start again once
+        it has been running for `dep_settle` seconds. Not their fault: no failure counted."""
+        if not self.healing:
+            return
+        for dep in self._all_dependents(name):
+            if dep.proc is not None:
+                self._terminate(dep, reason=f"dependency {name} is down")
+            elif dep.status not in (Status.RESTARTING, Status.QUARANTINED):
+                continue
+            self._reset_counters(dep)
+            dep.status = Status.WAITING
+            self.eventlog.set_state(dep.config.name, Status.WAITING, restarts=dep.restarts)
+            self._event(EventType.SERVICE_WAITING, dep.config.name, Severity.WARNING,
+                        f"waiting for dependency {name}", dependency=name)
+
+    def _start_after_wait(self, svc: ManagedService) -> None:
+        again = svc.started_at is not None           # False on the very first start
+        if again:
+            svc.restarts += 1
+        self.start(svc, restart=again)

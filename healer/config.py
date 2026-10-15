@@ -55,6 +55,7 @@ class ServiceConfig:
     heartbeat: Optional[HeartbeatPolicy] = None
     checkpoint: Optional[CheckpointPolicy] = None
     memory_limit_mb: Optional[float] = None
+    depends_on: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -188,6 +189,9 @@ def load_config(path: Optional[Path] = None) -> Config:
         if (not isinstance(command, list) or not command
                 or not all(isinstance(c, str) for c in command)):
             raise ConfigError(f"service '{name}': 'command' must be a non-empty list of strings")
+        depends = entry.get("depends_on") or []
+        if not isinstance(depends, list) or not all(isinstance(d, str) for d in depends):
+            raise ConfigError(f"service '{name}': 'depends_on' must be a list of service names")        
         seen.add(name)
         services.append(ServiceConfig(
             name=name, command=tuple(command), env=dict(entry.get("env") or {}),
@@ -195,9 +199,11 @@ def load_config(path: Optional[Path] = None) -> Config:
             heartbeat=_parse_heartbeat(f"service '{name}'", entry.get("heartbeat")),
             checkpoint=_parse_checkpoint(f"service '{name}'", entry.get("checkpoint")),
             memory_limit_mb=_parse_memory_limit(f"service '{name}'", entry.get("memory_limit_mb")),
+            depends_on=tuple(depends),
         ))
     if not services:
         raise ConfigError("no services configured")
+    _check_dependencies(services)
     protected, seen_paths = [], set()
     for entry in raw.get("protected_files") or []:
         pf = _parse_protected(entry)
@@ -206,3 +212,27 @@ def load_config(path: Optional[Path] = None) -> Config:
         seen_paths.add(pf.path)
         protected.append(pf)
     return Config(healer=settings, services=tuple(services), protected_files=tuple(protected))
+
+def _check_dependencies(services) -> None:
+    graph = {s.name: s.depends_on for s in services}
+    for name, deps in graph.items():
+        for dep in deps:
+            if dep not in graph:
+                raise ConfigError(f"service '{name}' depends on unknown service '{dep}'")
+            if dep == name:
+                raise ConfigError(f"service '{name}' cannot depend on itself")
+    visiting, done = set(), set()
+
+    def visit(node, path):
+        if node in done:
+            return
+        if node in visiting:
+            raise ConfigError("dependency cycle: " + " -> ".join(path + [node]))
+        visiting.add(node)
+        for dep in graph[node]:
+            visit(dep, path + [node])
+        visiting.discard(node)
+        done.add(node)
+
+    for node in graph:
+        visit(node, [])
