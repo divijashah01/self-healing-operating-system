@@ -150,8 +150,11 @@ class CommandExecutor:
 
     def _chaos_leak(self, target, args) -> str:
         name = self._service(target)
+        if self.supervisor.services[name].proc is None:
+            raise CommandError(f"{name} is not running")
         self.supervisor.set_chaos_flag(name, "leak")
         return f"started a memory leak in {name}"
+
 
     def _chaos_file(self, target, args) -> str:
         pf = self._file(target)

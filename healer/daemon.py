@@ -25,7 +25,7 @@ class Healer:
                                      checkpoint_dir=config.healer.data_dir / "checkpoints")
         self.vault = FileVault(self.eventlog, config.healer.data_dir / "snapshots")
         self.guard = FileGuard(config.protected_files, self.vault, self.eventlog)
-        self.commands = CommandExecutor(config, self.eventlog, self.supervisor, self.vault)
+        self.commands = CommandExecutor(config, self.eventlog, self.supervisor, self.vault, guard=self.guard)
         self._stop = threading.Event()
 
     def request_stop(self, *_args) -> None:
