@@ -2,35 +2,111 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Self-Healing OS · {% block title %}Dashboard{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0f1419; --card:#1a2129; --text:#e6e9ec; --muted:#8b98a5; --line:#2a343e;
-          --ok:#2ea043; --warn:#d29922; --bad:#f85149; --idle:#6e7681; --accent:#58a6ff; }
+  :root {
+    /* palette: blue-grey #96C2DB / #E5EDF1 + white */
+    --blue:#96C2DB; --blue-soft:#E5EDF1; --blue-deep:#3F7EA3; --blue-ink:#2A5C7A;
+    --bg:#F4F7F9; --card:#FFFFFF; --text:#1E2F3A; --muted:#6B8190; --line:#DCE6EC;
+    --ok:#1F9D55; --warn:#D9961A; --bad:#D64545; --idle:#6B8190; --accent:#3F7EA3;
+    --shadow:0 1px 2px rgba(30,47,58,.04), 0 6px 20px rgba(63,126,163,.08);
+    --radius:14px;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); }
-  nav { display:flex; gap:20px; align-items:center; padding:12px 24px; background:var(--card); border-bottom:1px solid var(--line); }
-  nav a { color:var(--muted); text-decoration:none; } nav a:hover, nav a.active { color:var(--text); }
-  nav .brand { font-weight:600; color:var(--text); margin-right:12px; }
-  main { padding:8px 24px 40px; max-width:1200px; margin:0 auto; }
-  h2 { font-size:12px; margin:24px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
-  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); }
-  th, td { text-align:left; padding:7px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-weight:500; font-size:12px; }
-  code { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); }
-  .card { background:var(--card); border:1px solid var(--line); padding:14px 16px; margin:14px 0; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; font:14px/1.5 'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif; color:var(--text);
+         background:radial-gradient(900px 420px at 85% -80px, var(--blue-soft), transparent 70%),
+                    radial-gradient(700px 360px at -5% 0, #EAF2F6, transparent 70%), var(--bg);
+         background-attachment:fixed; min-height:100vh; -webkit-font-smoothing:antialiased; }
+
+  /* ---------- floating pill navbar ---------- */
+  nav { position:sticky; top:14px; z-index:50; display:flex; align-items:center; gap:6px;
+        width:min(960px, calc(100% - 32px)); margin:14px auto 0; padding:8px 10px 8px 20px;
+        background:rgba(255,255,255,.82); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+        border:1px solid var(--line); border-radius:999px; box-shadow:var(--shadow); }
+  nav .brand { flex:1; font-weight:800; letter-spacing:-.01em; color:var(--text); display:flex; align-items:center; gap:10px; white-space:nowrap; }
+  nav .brand::before { content:""; width:12px; height:12px; border-radius:50%;
+        background:linear-gradient(135deg, var(--blue), var(--blue-deep)); box-shadow:0 0 0 4px var(--blue-soft); }
+  nav::after { content:""; flex:1; }               /* balances the brand so links sit in the centre */
+  nav a { color:var(--muted); text-decoration:none; font-weight:600; padding:7px 16px; border-radius:999px; transition:background .18s, color .18s; }
+  nav a:hover { color:var(--blue-ink); background:var(--blue-soft); }
+  nav a.active { color:#fff; background:var(--blue-deep); box-shadow:0 4px 12px rgba(63,126,163,.3); }
+  nav a:focus-visible, .btn:focus-visible { outline:2px solid var(--blue-deep); outline-offset:2px; }
+
+  main { padding:8px 24px 56px; max-width:1200px; margin:0 auto; }
+
+  /* ---------- headings ---------- */
+  h2 { font-size:15px; font-weight:700; margin:32px 0 10px; color:var(--text); display:flex; align-items:center; gap:10px; }
+  h2::before { content:""; width:4px; height:16px; border-radius:4px; background:var(--blue); }
+
+  /* ---------- tables ---------- */
+  table { width:100%; border-collapse:separate; border-spacing:0; background:var(--card); border:1px solid var(--line);
+          border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:10px 16px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--blue-ink); background:var(--blue-soft); font-weight:700; font-size:12px; letter-spacing:.02em; white-space:nowrap; }
+  tbody tr { transition:background .15s; }
+  tbody tr:hover { background:#F0F6F9; }
+  tbody tr:hover td:first-child { box-shadow:inset 3px 0 0 var(--blue-deep); }
+  tbody tr:last-child td { border-bottom:0; }
+  #metrics tr:first-child td { background:#F7FAFC; font-weight:600; }
+  #metrics tr:first-child:hover td { background:#EEF5F9; }
+
+  code { font-family:'JetBrains Mono',ui-monospace,monospace; font-size:12px; color:var(--blue-ink);
+         background:var(--blue-soft); padding:2px 7px; border-radius:6px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 20px; margin:14px 0; }
   .muted { color:var(--muted); }
-  .badge { padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; color:#fff; background:var(--idle); }
-  .b-running,.b-ok,.b-valid,.b-done { background:var(--ok); }
-    .b-restarting,.b-modified,.b-pending,.b-warning,.b-waiting,.b-suspect { background:var(--warn); }
-  .b-quarantined,.b-crashed,.b-missing,.b-failed,.b-invalid,.b-error,.b-critical { background:var(--bad); }
-  .b-info { background:#30363d; }
-  #healer { padding:10px 16px; margin:16px 0 0; border-left:4px solid var(--idle); background:var(--card); }
-  #healer.warn { border-color:var(--warn); }
-  #healer.up { border-color:var(--ok); } #healer.down { border-color:var(--bad); }
-  .btn { background:#21262d; color:var(--text); border:1px solid var(--line); padding:3px 10px; border-radius:6px; cursor:pointer; font-size:12px; }
-  .btn:hover { border-color:var(--accent); } .btn.warn { border-color:var(--warn); } .btn.primary { background:#238636; border-color:#238636; }
-  textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); padding:8px; font:12px ui-monospace,monospace; margin:6px 0; }
-  #toast { position:fixed; right:20px; bottom:20px; padding:10px 16px; background:var(--card); border:1px solid var(--line); display:none; max-width:420px; }
+
+  /* ---------- status pills ---------- */
+  .badge { --c:#4B5F6D; --t:#E5EDF1; display:inline-flex; align-items:center; gap:6px; padding:3px 11px 3px 9px; border-radius:999px;
+           font-size:12px; font-weight:700; color:var(--c); background:var(--t); text-transform:capitalize; white-space:nowrap; }
+  .badge::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .b-running,.b-ok,.b-valid,.b-done { --c:#16794A; --t:#DDF4E7; }
+  .b-restarting,.b-modified,.b-pending,.b-warning,.b-waiting,.b-suspect { --c:#A56A06; --t:#FDF0D3; }
+  .b-quarantined,.b-crashed,.b-missing,.b-failed,.b-invalid,.b-error,.b-critical { --c:#C23434; --t:#FCE4E4; }
+  .b-info { --c:#2A5C7A; --t:#DCEBF4; }
+  .b-pending::before, .b-restarting::before { animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity:.25; } }
+
+  /* ---------- healer status banner ---------- */
+  #healer { display:flex; align-items:center; gap:12px; padding:14px 20px; margin:24px 0 0; font-weight:600;
+            background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); }
+  #healer::before { content:""; flex:none; width:10px; height:10px; border-radius:50%; background:var(--idle); box-shadow:0 0 0 5px var(--blue-soft); }
+  #healer.up { background:#F2FBF6; border-color:#CDEBD9; } #healer.up::before { background:var(--ok); box-shadow:0 0 0 5px #D5F1E1; animation:glow 2s ease-in-out infinite; }
+  #healer.warn { background:#FFF9EC; border-color:#F3E2B8; } #healer.warn::before { background:var(--warn); box-shadow:0 0 0 5px #FAEBC6; }
+  #healer.down { background:#FEF3F3; border-color:#F5CFCF; } #healer.down::before { background:var(--bad); box-shadow:0 0 0 5px #F9DADA; }
+  @keyframes glow { 50% { box-shadow:0 0 0 8px rgba(31,157,85,.08); } }
+
+  /* ---------- buttons ---------- */
+  .actions { display:flex; flex-wrap:wrap; gap:6px; }
+  .btn { --b:var(--blue-deep); --bt:#EAF3F8; font:600 12px 'Manrope',system-ui,sans-serif; color:var(--b); background:var(--bt);
+         border:1px solid transparent; padding:5px 13px; border-radius:999px; cursor:pointer; transition:transform .12s, background .15s, color .15s, box-shadow .15s; }
+  .btn:hover { background:var(--b); color:#fff; box-shadow:0 4px 12px color-mix(in srgb, var(--b) 35%, transparent); transform:translateY(-1px); }
+  .btn:active { transform:translateY(0); }
+  .btn[data-action="start_service"] { --b:#1F9D55; --bt:#DDF4E7; }
+  .btn[data-action="stop_service"]  { --b:#D64545; --bt:#FCE4E4; }
+  .btn.warn, .btn[data-action="reset_circuit"] { --b:#D9961A; --bt:#FDF0D3; }
+  .btn.primary { background:var(--blue-deep); color:#fff; }
+  .btn.primary:hover { background:var(--blue-ink); }
+
+  textarea { width:100%; background:#fff; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+             font:12px/1.5 'JetBrains Mono',ui-monospace,monospace; margin:6px 0; resize:vertical; transition:border-color .15s, box-shadow .15s; }
+  textarea:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-soft); }
+
+  /* ---------- toast ---------- */
+  #toast { position:fixed; right:24px; bottom:24px; padding:12px 18px; background:var(--card); border:1px solid var(--line);
+           border-left-width:4px; border-radius:12px; box-shadow:0 10px 30px rgba(30,47,58,.15); display:none; max-width:420px; font-weight:600; animation:slideIn .25s ease-out; }
+  @keyframes slideIn { from { transform:translateY(12px); opacity:0; } }
+
+  @media (max-width:720px) {
+    nav { border-radius:24px; flex-wrap:wrap; padding:10px 14px; justify-content:center; }
+    nav .brand { flex:1 1 100%; justify-content:center; } nav::after { display:none; }
+    main { padding:8px 12px 40px; } table { display:block; overflow-x:auto; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
 </style>
 </head>
 <body>

@@ -29,7 +29,7 @@ const fmtPct = v => v == null ? '-' : v + '%';
 const fmtSec = v => v == null ? '-' : v + ' s';
 function metricRow(name, m) {
   return `<tr><td><b>${esc(name)}</b></td><td>${fmtPct(m.uptime_pct)}</td><td>${m.incidents}</td>
-    <td>${m.recovered}${m.open ? ` (+${m.open} open)` : ''}</td><td>${fmtSec(m.mttr_s)}</td><td>${fmtPct(m.success_pct)}</td></tr>`;
+    <td>${m.recovered}${m.open ? ` <span class="muted">(+${m.open} open)</span>` : ''}</td><td>${fmtSec(m.mttr_s)}</td><td>${fmtPct(m.success_pct)}</td></tr>`;
 }
 async function refreshMetrics() {
   try {
@@ -57,7 +57,7 @@ function renderServices(list) {
       btns.push(`<button class="btn warn" data-action="reset_circuit" data-target="${t}">Reset circuit</button>`);
     return `<tr><td><b>${t}</b></td><td>${badge(s.status)}</td><td>${s.pid ?? '-'}</td><td>${s.restarts}</td>
       <td>${s.cpu_percent == null ? '-' : s.cpu_percent.toFixed(1)}</td>
-      <td>${s.rss_mb == null ? '-' : s.rss_mb.toFixed(1)}</td><td>${btns.join(' ')}</td></tr>`;
+      <td>${s.rss_mb == null ? '-' : s.rss_mb.toFixed(1)}</td><td><div class="actions">${btns.join('')}</div></td></tr>`;
   }).join('') || '<tr><td colspan="7" class="muted">No services yet. Is the healer running?</td></tr>';
 }
 function renderCommands(list) {
